@@ -1,0 +1,36 @@
+# 密钥
+sa.json
+*.pem
+*.key
+
+# 上传/测试文件
+uploads/*.docx
+uploads/*.doc
+
+# 临时脚本
+sync_glossary.py
+
+# 参考文档
+*.docx
+*.pdf
+*.html
+
+# 图片资源（非代码）
+*.png
+*.jpg
+*.jpeg
+
+# Composer
+vendor/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
