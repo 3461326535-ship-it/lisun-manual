@@ -176,7 +176,7 @@ class Lisun_Manual_Glossary {
         add_action('wp_ajax_lisun_save_post_term_config', [__CLASS__, 'ajax_save_post_term_config']);
         add_action('wp_ajax_lisun_set_post_term_override', [__CLASS__, 'ajax_set_post_term_override']);
 
-        // 文章编辑页“本篇术语”侧边栏。设置项只控制显示，不影响翻译筛选逻辑。
+        // [修改时间：2026-11-04 15:21:05 +08:00] 文章编辑页“本篇术语”侧边栏；设置项只控制显示，不影响翻译筛选逻辑。
         add_action('add_meta_boxes', [__CLASS__, 'add_post_term_metabox']);
 
         // REST API 端点：供本地脚本推送术语库 + 双站共享

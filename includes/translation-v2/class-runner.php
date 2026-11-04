@@ -813,7 +813,7 @@ class Lisun_Manual_V2_Runner {
         }
         $current_terms = Lisun_Manual_Glossary::is_enabled() ? Lisun_Manual_Glossary::terms_for_post($post_id) : [];
         if (Lisun_Manual_Glossary::is_enabled()) {
-            // 临时选择已物化到 $current_terms，消费一次后清除；
+            // [修改时间：2026-11-04 15:21:05 +08:00] 临时选择已物化到 $current_terms，消费一次后清除；
             // 选择的 term_id 会随结果返回给发布层，用于记录“本篇已应用”。
             Lisun_Manual_Glossary::clear_post_term_override($post_id);
         }
@@ -1002,6 +1002,7 @@ class Lisun_Manual_V2_Runner {
             'occurrences' => count($all_occurrences),
             'requests' => $stats['requests'],
             'characters' => $stats['characters'],
+            // [修改时间：2026-11-04 15:21:05 +08:00] 将本次实际生效的术语 ID 交给发布层，生成“文章已应用”记录。
             'glossary_term_ids' => array_values(array_filter(array_map(static function ($term) {
                 return (string) ($term['term_id'] ?? '');
             }, $current_terms))),
