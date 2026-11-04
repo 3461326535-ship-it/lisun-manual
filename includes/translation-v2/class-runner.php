@@ -813,8 +813,8 @@ class Lisun_Manual_V2_Runner {
         }
         $current_terms = Lisun_Manual_Glossary::is_enabled() ? Lisun_Manual_Glossary::terms_for_post($post_id) : [];
         if (Lisun_Manual_Glossary::is_enabled()) {
-            // “仅本次翻译使用”的临时选择已物化到 $current_terms，消费一次后清除，
-            // 下次翻译若无新的临时选择则回落到本篇默认配置。
+            // 临时选择已物化到 $current_terms，消费一次后清除；
+            // 选择的 term_id 会随结果返回给发布层，用于记录“本篇已应用”。
             Lisun_Manual_Glossary::clear_post_term_override($post_id);
         }
         $units = array_merge($content_document['units'], [$title_unit]);
@@ -1002,6 +1002,9 @@ class Lisun_Manual_V2_Runner {
             'occurrences' => count($all_occurrences),
             'requests' => $stats['requests'],
             'characters' => $stats['characters'],
+            'glossary_term_ids' => array_values(array_filter(array_map(static function ($term) {
+                return (string) ($term['term_id'] ?? '');
+            }, $current_terms))),
             'term_anomaly_units' => count(self::term_anomaly_summary($ordered)),
             'term_anomalies' => self::term_anomaly_summary($ordered),
         ];
