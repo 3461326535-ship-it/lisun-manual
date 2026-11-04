@@ -463,11 +463,9 @@ class Lisun_Manual_V2_Runner {
             Lisun_Manual_V2_Materializer::MODE_CURRENT_GLOSSARY
         );
         if (is_wp_error($public_content)) return $public_content;
-        $public_content = Lisun_Manual_Translate::repair_deepl_structural_boundaries(
-            (string) $content,
-            (string) $public_content
-        );
-        $public_content = Lisun_Manual_Translate::merge_figure_captions_in_html($public_content);
+        self::log('V2 materialized image_units=' . count(array_filter($content_units, static function ($unit) {
+            return strpos((string) ($unit['target_template'] ?? ''), '<img') !== false;
+        })) . ' public_images=' . substr_count((string) $public_content, '<img'));
         $integrity = self::validate_visible_translation((string) $content, (string) $public_content);
         if (is_wp_error($integrity)) return $integrity;
         if (!$title_unit) return new WP_Error('v2_title_missing', 'V2 标题翻译单元缺失');
@@ -891,6 +889,19 @@ class Lisun_Manual_V2_Runner {
         // Persist casing metadata from the actual English slot positions,
         // after DeepL has completed any sentence-level word reordering.
         foreach ($ordered as &$ordered_unit) {
+            // Google/DeepL may omit void media tags while translating HTML.
+            // Images are source structure, never translatable text: restore any
+            // missing source <img> tags before materialization and validation.
+            $source_html = (string) ($ordered_unit['source_html'] ?? '');
+            if (preg_match_all('/<img\b[^>]*>/is', $source_html, $source_images)) {
+                $target_count = substr_count((string) ($ordered_unit['target_template'] ?? ''), '<img');
+                if ($target_count < count($source_images[0])) {
+                    $missing = array_slice($source_images[0], $target_count);
+                    $ordered_unit['target_template'] .= implode('', $missing);
+                    self::log('V2 restored missing images unit=' . (string) ($ordered_unit['unit_key'] ?? '')
+                        . ' source=' . count($source_images[0]) . ' target_before=' . $target_count);
+                }
+            }
             $target_contexts = Lisun_Manual_V2_Materializer::target_case_contexts(
                 (string) ($ordered_unit['target_template'] ?? ''),
                 (array) ($ordered_unit['occurrences'] ?? []),
@@ -937,11 +948,9 @@ class Lisun_Manual_V2_Runner {
             Lisun_Manual_V2_Materializer::MODE_SNAPSHOT
         );
         if (is_wp_error($public_content)) return $public_content;
-        $public_content = Lisun_Manual_Translate::repair_deepl_structural_boundaries(
-            (string) $content,
-            (string) $public_content
-        );
-        $public_content = Lisun_Manual_Translate::merge_figure_captions_in_html($public_content);
+        self::log('V2 materialized image_units=' . count(array_filter($content_units, static function ($unit) {
+            return strpos((string) ($unit['target_template'] ?? ''), '<img') !== false;
+        })) . ' public_images=' . substr_count((string) $public_content, '<img'));
         $integrity = self::validate_visible_translation((string) $content, (string) $public_content);
         if (is_wp_error($integrity)) return $integrity;
         if (empty($title_units)) return new WP_Error('v2_title_missing', 'V2 标题翻译单元缺失');
@@ -1081,7 +1090,72 @@ class Lisun_Manual_V2_Runner {
                 'DeepL 返回的整篇可见译文严重缺失（完整度低于 60%），未保存和推送'
             );
         }
+        $source_images = preg_match_all('/<img\b[^>]*>/is', (string) $source, $source_matches);
+        $translated_images = preg_match_all('/<img\b[^>]*>/is', (string) $translated, $translated_matches);
+        if ($source_images !== false && $translated_images !== false && $translated_images < $source_images) {
+            return new WP_Error(
+                'v2_missing_images',
+                sprintf('译文缺少图片标签（原文 %d 张，译文 %d 张），未保存和推送', $source_images, $translated_images)
+            );
+        }
         return true;
+    }
+
+    private static function restore_document_images($source, $translated) {
+        $source_count = preg_match_all('/<img\b[^>]*>/is', (string) $source, $source_matches);
+        $target_count = preg_match_all('/<img\b[^>]*>/is', (string) $translated, $target_matches);
+        if ($source_count === false || $source_count <= $target_count) return (string) $translated;
+        $missing = array_slice($source_matches[0], $target_count);
+        self::log('V2 restored document images source=' . $source_count . ' target_before=' . $target_count);
+        $missing_index = 0;
+        $result = preg_replace_callback(
+            '/(<(?:p|div|figcaption)\b[^>]*>\s*(?:Figure|Fig\.?|Image|图片|图)\s*[0-9]+(?:[.:-][0-9]+)*.*?<\/(?:p|div|figcaption)>)/is',
+            static function ($match) use (&$missing, &$missing_index) {
+                if (!isset($missing[$missing_index])) return $match[0];
+                return $missing[$missing_index++] . $match[0];
+            },
+            (string) $translated
+        );
+        if ($result === null) $result = (string) $translated;
+        if ($missing_index < count($missing)) {
+            $result = rtrim($result) . implode('', array_slice($missing, $missing_index));
+        }
+        return $result;
+    }
+
+    /** Restore each figure's source image by document structure, never by filename or caption number. */
+    private static function restore_figure_image_structure($source, $translated) {
+        preg_match_all('/<figure\b[^>]*>.*?<\/figure>/is', (string) $source, $source_matches);
+        $source_figures = (array) ($source_matches[0] ?? []);
+        if (!$source_figures) {
+            return (string) $translated;
+        }
+        preg_match_all('/<figure\b[^>]*>.*?<\/figure>/is', (string) $translated, $target_matches);
+        $target_figures = (array) ($target_matches[0] ?? []);
+        if (count($source_figures) !== count($target_figures)) {
+            self::log('V2 figure structure mismatch source=' . count($source_figures)
+                . ' target=' . count($target_figures));
+            return (string) $translated;
+        }
+        $changed = false;
+        $figure_index = 0;
+        $result = preg_replace_callback('/<figure\b[^>]*>.*?<\/figure>/is', static function ($match) use (&$source_figures, &$changed, &$figure_index) {
+            $figure = $match[0];
+            $source_figure = $source_figures[$figure_index++] ?? '';
+            preg_match_all('/<img\b[^>]*>/is', $source_figure, $images);
+            $images = (array) ($images[0] ?? []);
+            $without_images = preg_replace('/<img\b[^>]*>\s*/is', '', $figure);
+            if ($without_images === null) return $figure;
+            $replacement = implode('', $images);
+            $updated = preg_replace('/(<figure\b[^>]*>)/is', '$1' . $replacement, $without_images, 1);
+            if ($updated !== null && $updated !== $figure) {
+                $changed = true;
+                return $updated;
+            }
+            return $figure;
+        }, (string) $translated);
+        if ($changed) self::log('V2 restored figure image structure by caption');
+        return $result === null ? (string) $translated : $result;
     }
 
     private static function log($message) {
