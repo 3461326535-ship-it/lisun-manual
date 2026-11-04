@@ -176,6 +176,9 @@ class Lisun_Manual_Glossary {
         add_action('wp_ajax_lisun_save_post_term_config', [__CLASS__, 'ajax_save_post_term_config']);
         add_action('wp_ajax_lisun_set_post_term_override', [__CLASS__, 'ajax_set_post_term_override']);
 
+        // 文章编辑页“本篇术语”侧边栏。设置项只控制显示，不影响翻译筛选逻辑。
+        add_action('add_meta_boxes', [__CLASS__, 'add_post_term_metabox']);
+
         // REST API 端点：供本地脚本推送术语库 + 双站共享
         add_action('rest_api_init', function () {
             register_rest_route('lisun-manual/v1', '/glossary', [
@@ -193,6 +196,70 @@ class Lisun_Manual_Glossary {
                 },
             ]);
         });
+    }
+
+    /** 在中文 manual 编辑页显示本篇术语配置。 */
+    public static function add_post_term_metabox() {
+        if (!get_option('lisun_show_post_term_panel', true)) return;
+        add_meta_box(
+            'lisun-manual-post-terms',
+            __('本篇术语', 'lisun-manual'),
+            [__CLASS__, 'render_post_term_metabox'],
+            'manual',
+            'side',
+            'high'
+        );
+    }
+
+    /** 渲染术语选择，并把选择分别写入默认配置或本次翻译临时覆盖。 */
+    public static function render_post_term_metabox($post) {
+        if (get_post_meta($post->ID, '_lisun_manual_lang', true) === 'en') {
+            echo '<p style="color:#777;">' . esc_html__('术语配置请在中文原文中调整。', 'lisun-manual') . '</p>';
+            return;
+        }
+        $terms = self::post_term_config($post->ID);
+        wp_nonce_field('lisun_manual_post_terms', 'lisun_post_terms_nonce');
+        ?>
+        <div id="lisun-post-terms" data-post-id="<?php echo (int) $post->ID; ?>">
+            <p style="margin:0 0 8px;color:#666;font-size:12px;line-height:1.45;">勾选后可保存为本篇默认术语，或只应用于下一次翻译。</p>
+            <input type="search" class="widefat" id="lisun-post-terms-search" placeholder="搜索中文或英文术语…" style="margin-bottom:8px;">
+            <div id="lisun-post-terms-list" style="max-height:300px;overflow:auto;border:1px solid #dcdcde;background:#fff;padding:4px 6px;">
+                <?php foreach ($terms as $term): ?>
+                    <label class="lisun-post-term-row" data-search="<?php echo esc_attr(strtolower($term['zh'] . ' ' . $term['en'])); ?>" style="display:block;padding:4px 0;font-size:12px;line-height:1.3;">
+                        <input type="checkbox" value="<?php echo esc_attr($term['term_id']); ?>" <?php checked($term['enabled']); ?>>
+                        <span><?php echo esc_html($term['zh']); ?> → <?php echo esc_html($term['en']); ?></span>
+                    </label>
+                <?php endforeach; ?>
+            </div>
+            <p style="margin:8px 0 4px;display:flex;gap:4px;flex-wrap:wrap;">
+                <button type="button" class="button button-small" id="lisun-post-terms-save">保存为本篇默认</button>
+                <button type="button" class="button button-primary button-small" id="lisun-post-terms-once">仅本次翻译使用</button>
+            </p>
+            <p id="lisun-post-terms-status" style="margin:4px 0 0;font-size:12px;color:#2271b1;"></p>
+        </div>
+        <script>
+        jQuery(function($) {
+            var box = $('#lisun-post-terms'); if (!box.length) return;
+            var nonce = $('#lisun_post_terms_nonce').val();
+            function ids() { var out=[]; box.find('input[type=checkbox]:checked').each(function(){out.push($(this).val());}); return out; }
+            function request(action, success) {
+                var data = {_nonce: nonce, action: action, post_id: box.data('post-id'), enabled_ids: ids()};
+                var status = $('#lisun-post-terms-status').text('保存中…');
+                $.post(ajaxurl, data).done(function(resp) {
+                    if (resp && resp.success) { status.text(resp.data.message || '已保存'); }
+                    else { status.css('color','#d63638').text((resp && resp.data && resp.data.message) || '保存失败'); }
+                    if (success) success(resp);
+                }).fail(function(){ status.css('color','#d63638').text('请求失败，请刷新后重试'); });
+            }
+            $('#lisun-post-terms-save').on('click', function(){ request('lisun_save_post_term_config'); });
+            $('#lisun-post-terms-once').on('click', function(){ request('lisun_set_post_term_override'); });
+            $('#lisun-post-terms-search').on('input', function(){
+                var q = String($(this).val() || '').toLowerCase();
+                box.find('.lisun-post-term-row').each(function(){ $(this).toggle(!q || String($(this).data('search')).indexOf(q) >= 0); });
+            });
+        });
+        </script>
+        <?php
     }
 
     /**
