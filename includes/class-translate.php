@@ -424,6 +424,8 @@ class Lisun_Manual_Translate {
         add_action('add_meta_boxes', [__CLASS__, 'add_translate_metabox']);
         add_action('admin_footer', [__CLASS__, 'render_translate_metabox_js']);
         add_action('admin_notices', [__CLASS__, 'render_global_translation_notices']);
+        add_action('admin_footer', [__CLASS__, 'render_global_translation_notice_js']);
+        add_action('wp_ajax_lisun_dismiss_translation_notice', [__CLASS__, 'ajax_dismiss_translation_notice']);
 
         // REST API 端点
         add_action('rest_api_init', function () {
@@ -929,6 +931,8 @@ class Lisun_Manual_Translate {
     public static function render_global_translation_notices() {
         if (!current_user_can('edit_posts')) return;
         global $wpdb;
+        $dismissed = get_user_meta(get_current_user_id(), '_lisun_translation_notice_dismissed', true);
+        $dismissed = is_array($dismissed) ? array_fill_keys(array_map('strval', $dismissed), true) : [];
         $table = $wpdb->prefix . 'lisun_translate_queue';
         $rows = $wpdb->get_results("SELECT id, post_id, action, status, error_msg, updated_at
             FROM `{$table}` WHERE status IN ('done', 'failed')
@@ -936,6 +940,7 @@ class Lisun_Manual_Translate {
             ORDER BY id DESC LIMIT 5");
         if (empty($rows)) return;
         foreach ($rows as $row) {
+            if (isset($dismissed[(string) $row->id])) continue;
             $post = get_post((int) $row->post_id);
             if (!$post) continue;
             $url = get_edit_post_link($post->ID);
@@ -945,9 +950,37 @@ class Lisun_Manual_Translate {
             $message = $is_failed
                 ? $label . '失败：' . ((string) $row->error_msg ?: '请打开文章重试')
                 : $label . '并推送完成。';
-            echo '<div class="notice ' . esc_attr($class) . ' is-dismissible"><p><strong>说明书 #' . (int) $post->ID . '</strong>：'
-                . esc_html($message) . ' <a href="' . esc_url($url) . '">' . ($is_failed ? '打开文章重试' : '查看文章') . '</a></p></div>';
+            echo '<div class="notice lisun-translation-notice ' . esc_attr($class) . ' is-dismissible" data-job-id="' . (int) $row->id . '"><p><strong>说明书 #' . (int) $post->ID . '</strong>：'
+                . esc_html($message) . ' <a href="' . esc_url($url) . '">' . ($is_failed ? '打开文章重试' : '查看文章') . '</a></p><button type="button" class="notice-dismiss" aria-label="关闭通知"></button></div>';
         }
+    }
+
+    /** [修改时间：2026-11-04 15:35:00 +08:00] 持久化后台用户已关闭的翻译任务通知。 */
+    public static function ajax_dismiss_translation_notice() {
+        if (!current_user_can('edit_posts')) wp_send_json_error(['message' => '无权限'], 403);
+        check_ajax_referer('lisun_translation_notice', '_nonce');
+        $job_id = absint($_POST['job_id'] ?? 0);
+        if (!$job_id) wp_send_json_error(['message' => '缺少任务 ID']);
+        $dismissed = get_user_meta(get_current_user_id(), '_lisun_translation_notice_dismissed', true);
+        $dismissed = is_array($dismissed) ? array_values(array_unique(array_map('intval', $dismissed))) : [];
+        array_unshift($dismissed, $job_id);
+        update_user_meta(get_current_user_id(), '_lisun_translation_notice_dismissed', array_slice($dismissed, 0, 100));
+        wp_send_json_success();
+    }
+
+    /** [修改时间：2026-11-04 15:35:00 +08:00] 关闭通知后写入当前后台用户的已读记录。 */
+    public static function render_global_translation_notice_js() {
+        if (!current_user_can('edit_posts')) return;
+        ?>
+        <script>
+        jQuery(function($) {
+            $(document).on('click', '.lisun-translation-notice .notice-dismiss', function() {
+                var id = $(this).closest('.lisun-translation-notice').data('job-id');
+                $.post(ajaxurl, {action:'lisun_dismiss_translation_notice', job_id:id, _nonce:'<?php echo esc_js(wp_create_nonce('lisun_translation_notice')); ?>'});
+            });
+        });
+        </script>
+        <?php
     }
 
     // ==================== API 配置 ====================
