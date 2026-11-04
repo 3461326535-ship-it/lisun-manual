@@ -116,6 +116,20 @@ class Lisun_Manual_V2_Unit_Transport {
                 continue;
             }
 
+            // Images are immutable document structure. Give each one an
+            // explicit, stable transport label so the provider can return it
+            // at the exact text position where it was sent. The raw source
+            // node is restored after translation; its filename is irrelevant.
+            if ($token['type'] === 'start' && $token['void'] && $token['tag'] === 'img') {
+                $id = 'img_' . sprintf('%03d', $format_sequence++);
+                $format_map[$id] = ['kind' => 'image', 'raw' => $token['raw']];
+                // Google may discard an unknown XML <ph>. A plain opaque
+                // marker survives both Google and DeepL and is replaced with
+                // the original node after the translated text is restored.
+                $xml .= ' LISUN_IMAGE_' . substr($id, 4) . ' ';
+                continue;
+            }
+
             if ($token['type'] === 'end' && isset($pairs[$index])) {
                 $xml .= '</f>';
                 continue;
@@ -229,6 +243,14 @@ class Lisun_Manual_V2_Unit_Transport {
         if (is_wp_error($finalized)) return $finalized;
         $inner = $finalized;
 
+        foreach ((array) ($prepared['format_map'] ?? []) as $format_id => $format) {
+            if (($format['kind'] ?? '') !== 'image') continue;
+            $marker = 'LISUN_IMAGE_' . substr((string) $format_id, 4);
+            if (strpos($inner, $marker) === false) continue;
+            $inner = str_replace($marker, (string) ($format['raw'] ?? ''), $inner);
+            $state['formats'][] = (string) $format_id;
+        }
+
         $expected_formats = array_keys((array) $prepared['format_map']);
         $expected_terms = array_column((array) $prepared['occurrences'], 'occurrence_id');
         sort($expected_formats, SORT_STRING);
@@ -236,6 +258,17 @@ class Lisun_Manual_V2_Unit_Transport {
         sort($state['formats'], SORT_STRING);
         sort($state['terms'], SORT_STRING);
         if ($expected_formats !== $state['formats']) {
+            $missing_formats = array_values(array_diff($expected_formats, $state['formats']));
+            $missing_images = array_values(array_filter($missing_formats, static function ($id) use ($prepared) {
+                return (($prepared['format_map'][$id]['kind'] ?? '') === 'image');
+            }));
+            if (!empty($missing_images)) {
+                return new WP_Error(
+                    'v2_image_placeholder_missing',
+                    '翻译器丢失图片占位符，未保存当前翻译单元',
+                    ['missing_images' => $missing_images]
+                );
+            }
             return new WP_Error(
                 'v2_format_mismatch',
                 'DeepL 返回的格式占位符不完整，当前翻译单元未保存',
@@ -299,6 +332,14 @@ class Lisun_Manual_V2_Unit_Transport {
             $inner .= $restored;
         }
 
+        foreach ((array) ($prepared['format_map'] ?? []) as $format_id => $format) {
+            if (($format['kind'] ?? '') !== 'image') continue;
+            $marker = 'LISUN_IMAGE_' . substr((string) $format_id, 4);
+            if (strpos($inner, $marker) === false) continue;
+            $inner = str_replace($marker, (string) ($format['raw'] ?? ''), $inner);
+            $state['formats'][] = (string) $format_id;
+        }
+
         // A missing term separator is recoverable: it is an internal transport
         // aid, not visible HTML. Real formatting placeholders may also be
         // missing in a DeepL response. In that case we deliberately keep the
@@ -317,6 +358,16 @@ class Lisun_Manual_V2_Unit_Transport {
         sort($expected_formats, SORT_STRING);
         sort($actual_formats, SORT_STRING);
         $missing_formats = array_values(array_diff($expected_formats, $actual_formats));
+        $missing_images = array_values(array_filter($missing_formats, static function ($id) use ($prepared) {
+            return (($prepared['format_map'][$id]['kind'] ?? '') === 'image');
+        }));
+        if (!empty($missing_images)) {
+            return new WP_Error(
+                'v2_image_placeholder_missing',
+                '翻译器丢失图片占位符，未保存当前翻译单元',
+                ['missing_images' => $missing_images]
+            );
+        }
         $extra_formats = array_values(array_diff($actual_formats, $expected_formats));
 
         $inner = self::remove_term_separator_placeholders($inner);

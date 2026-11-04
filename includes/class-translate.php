@@ -3224,6 +3224,18 @@ class Lisun_Manual_Translate {
             $post_id
         ));
         if ($existing) {
+            // 全量重译必须覆盖尚未开始的旧增量任务；否则前端虽请求
+            // retranslate，worker 仍会执行旧的 translate action。
+            if ($action === 'retranslate') {
+                $existing_row = $wpdb->get_row($wpdb->prepare(
+                    "SELECT id, action, status FROM `{$table}` WHERE id = %d LIMIT 1",
+                    (int) $existing
+                ));
+                if ($existing_row && $existing_row->status === 'pending') {
+                    $wpdb->update($table, ['action' => 'retranslate', 'updated_at' => current_time('mysql')], ['id' => (int) $existing]);
+                    self::debug_log("queue upgraded post={$post_id} job={$existing} action=retranslate");
+                }
+            }
             self::debug_log("queue enqueue skipped post={$post_id} action={$action} existing_job={$existing}");
             return (int) $existing;
         }
