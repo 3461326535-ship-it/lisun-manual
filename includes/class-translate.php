@@ -423,6 +423,7 @@ class Lisun_Manual_Translate {
         // 文章编辑页「翻译 & 推送」侧边栏 + 内联 JS
         add_action('add_meta_boxes', [__CLASS__, 'add_translate_metabox']);
         add_action('admin_footer', [__CLASS__, 'render_translate_metabox_js']);
+        add_action('admin_notices', [__CLASS__, 'render_global_translation_notices']);
 
         // REST API 端点
         add_action('rest_api_init', function () {
@@ -579,6 +580,18 @@ class Lisun_Manual_Translate {
         // 跳过自动保存和修订版本
         if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
         if (wp_is_post_revision($post_id)) return;
+
+        // [修改时间：2026-11-04 15:31:00 +08:00] 保存成功后由服务端直接入持久化队列，页面关闭不影响任务。
+        if (isset($_POST['lisun_auto_translate_settings_present'])) {
+            $auto_mode = !empty($_POST['lisun_auto_translate_retranslate'])
+                ? 'retranslate'
+                : (!empty($_POST['lisun_auto_translate_incremental']) ? 'incremental' : '');
+            if (in_array($auto_mode, ['incremental', 'retranslate'], true)) {
+                update_post_meta($post_id, '_lisun_auto_translate_mode', $auto_mode);
+            } else {
+                delete_post_meta($post_id, '_lisun_auto_translate_mode');
+            }
+        }
         // 仅中文页面
         $lang = get_post_meta($post_id, '_lisun_manual_lang', true);
         if ($lang && $lang !== 'zh') return;
@@ -630,6 +643,21 @@ class Lisun_Manual_Translate {
 
         // 保留旧备份用于增量翻译（内容变了但大部分段落可能没变）
         // 不清除备份；translate_post 会对比段 hash 只翻译变化的段
+
+        $auto_mode = (string) get_post_meta($post_id, '_lisun_auto_translate_mode', true);
+        if (in_array($auto_mode, ['incremental', 'retranslate'], true)) {
+            $job_id = $auto_mode === 'retranslate'
+                ? self::enqueue_retranslate_translation_job($post_id)
+                : self::enqueue_incremental_translation_job($post_id);
+            if ($job_id) {
+                self::trigger_queue_worker($post_id);
+                self::debug_log('auto translation queued post=' . (int) $post_id
+                    . ' mode=' . $auto_mode . ' job=' . (int) $job_id);
+            } else {
+                update_post_meta($post_id, '_lisun_manual_last_error', '自动翻译任务入队失败，请打开文章后手动重试');
+                self::debug_log('auto translation queue FAILED post=' . (int) $post_id . ' mode=' . $auto_mode);
+            }
+        }
     }
 
     // ==================== 文章编辑页「翻译 & 推送」Meta Box ====================
@@ -754,6 +782,12 @@ class Lisun_Manual_Translate {
             <?php if ($last_sync): ?>
                 <p style="font-size:12px;color:#999;margin:2px 0 8px;"><?php _e('上次同步', 'lisun-manual'); ?>: <?php echo esc_html($last_sync); ?></p>
             <?php endif; ?>
+            <p style="margin:8px 0 6px;font-size:12px;line-height:1.4;">
+                <input type="hidden" name="lisun_auto_translate_settings_present" value="1">
+                <label style="display:block;margin-bottom:4px;"><input type="checkbox" name="lisun_auto_translate_incremental" value="1" <?php checked(get_post_meta($post->ID, '_lisun_auto_translate_mode', true), 'incremental'); ?>> 保存后自动增量翻译并推送</label>
+                <label style="display:block;"><input type="checkbox" name="lisun_auto_translate_retranslate" value="1" <?php checked(get_post_meta($post->ID, '_lisun_auto_translate_mode', true), 'retranslate'); ?>> 保存后自动全量重译并推送</label>
+                <span style="display:block;color:#777;margin-top:3px;">保存成功后任务进入后台队列，关闭页面不影响执行。</span>
+            </p>
 
             <p>
                 <button type="button" class="button button-primary button-small lisun-mb-translate" <?php echo $locked ? 'disabled' : ''; ?>>
@@ -810,6 +844,11 @@ class Lisun_Manual_Translate {
                 });
             }
             function setProgress(msg) { $('#lisun-mb-progress').text(msg); }
+
+            // [修改时间：2026-11-04 15:31:00 +08:00] 两种自动翻译模式互斥，避免一次保存同时排入增量和全量任务。
+            $('input[name="lisun_auto_translate_incremental"], input[name="lisun_auto_translate_retranslate"]').on('change', function () {
+                if (this.checked) $(this).closest('p').find('input[type="checkbox"]').not(this).prop('checked', false);
+            });
 
             function pollDone() {
                 var timer = setInterval(function () {
@@ -881,6 +920,34 @@ class Lisun_Manual_Translate {
         });
         </script>
         <?php
+    }
+
+    /**
+     * 在任意 WordPress 后台页面提示最近完成或失败的后台翻译任务。
+     * [修改时间：2026-11-04 15:31:00 +08:00] 页面关闭后仍可在下次打开后台时看到结果。
+     */
+    public static function render_global_translation_notices() {
+        if (!current_user_can('edit_posts')) return;
+        global $wpdb;
+        $table = $wpdb->prefix . 'lisun_translate_queue';
+        $rows = $wpdb->get_results("SELECT id, post_id, action, status, error_msg, updated_at
+            FROM `{$table}` WHERE status IN ('done', 'failed')
+            AND updated_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            ORDER BY id DESC LIMIT 5");
+        if (empty($rows)) return;
+        foreach ($rows as $row) {
+            $post = get_post((int) $row->post_id);
+            if (!$post) continue;
+            $url = get_edit_post_link($post->ID);
+            $is_failed = $row->status === 'failed';
+            $class = $is_failed ? 'notice-error' : 'notice-success';
+            $label = $row->action === 'retranslate' ? '全量重译' : '增量翻译';
+            $message = $is_failed
+                ? $label . '失败：' . ((string) $row->error_msg ?: '请打开文章重试')
+                : $label . '并推送完成。';
+            echo '<div class="notice ' . esc_attr($class) . ' is-dismissible"><p><strong>说明书 #' . (int) $post->ID . '</strong>：'
+                . esc_html($message) . ' <a href="' . esc_url($url) . '">' . ($is_failed ? '打开文章重试' : '查看文章') . '</a></p></div>';
+        }
     }
 
     // ==================== API 配置 ====================
@@ -3323,6 +3390,24 @@ class Lisun_Manual_Translate {
         set_transient("lisun_trans_{$post_id}", [
             'step' => 'queued', 'stage' => 'queued', 'progress' => 2,
             'msg' => '已进入增量翻译队列，等待开始…', 'time' => time(),
+        ], 3600);
+        return (int) $job_id;
+    }
+
+    /**
+     * 保存后自动全量重译使用的持久化入队入口。
+     * [修改时间：2026-11-04 15:31:00 +08:00] 与增量队列共用幂等、锁定和 Worker 机制。
+     */
+    public static function enqueue_retranslate_translation_job($post_id) {
+        $post_id = absint($post_id);
+        if (!$post_id || self::is_en_locked($post_id)) return 0;
+        $post = get_post($post_id);
+        if (!$post || $post->post_type !== 'manual') return 0;
+        $job_id = self::enqueue_job($post_id, 'retranslate');
+        if (!$job_id) return 0;
+        set_transient("lisun_trans_{$post_id}", [
+            'step' => 'queued', 'stage' => 'queued', 'progress' => 2,
+            'msg' => '已进入全量重译队列，等待开始…', 'time' => time(),
         ], 3600);
         return (int) $job_id;
     }
