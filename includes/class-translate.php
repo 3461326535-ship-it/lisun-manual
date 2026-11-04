@@ -730,6 +730,10 @@ class Lisun_Manual_Translate {
         $term_anomalies = is_array($term_anomalies) ? $term_anomalies : [];
         $glossary_warning = get_post_meta($post->ID, '_lisun_manual_glossary_warning', true);
         $glossary_warning = is_array($glossary_warning) ? $glossary_warning : [];
+        // [修改时间：2026-11-04 15:42:00 +08:00] 自动翻译返回编辑页后继续轮询，完成时自动刷新。
+        $background_progress = get_transient("lisun_trans_{$post->ID}");
+        $auto_poll = is_array($background_progress)
+            && in_array((string) ($background_progress['step'] ?? ''), ['queued', 'processing'], true);
 
         $status_map = [
             'synced'      => ['label' => __('✓ 已推送至远程站', 'lisun-manual'), 'color' => '#00a32a'],
@@ -740,7 +744,7 @@ class Lisun_Manual_Translate {
         ];
         $st = $status_map[$status] ?? ['label' => __('待翻译', 'lisun-manual'), 'color' => '#999'];
         ?>
-        <div id="lisun-mb-wrap" data-id="<?php echo (int) $post->ID; ?>">
+        <div id="lisun-mb-wrap" data-id="<?php echo (int) $post->ID; ?>" data-auto-poll="<?php echo $auto_poll ? '1' : '0'; ?>">
             <p style="margin:2px 0 8px;">
                 <span id="lisun-mb-status" style="color:<?php echo $st['color']; ?>;font-weight:600;"><?php echo $st['label']; ?></span>
                 <?php if ($locked): ?>
@@ -881,6 +885,9 @@ class Lisun_Manual_Translate {
                 }, 2000);
                 setTimeout(function () { clearInterval(timer); }, 600000);
             }
+
+            // [修改时间：2026-11-04 15:42:00 +08:00] 保存后自动入队时，页面加载即恢复进度轮询。
+            if ($wrap.data('auto-poll') === 1 || $wrap.data('auto-poll') === '1') pollDone();
 
             $('.lisun-mb-translate').on('click', function () {
                 var $btn = $(this).prop('disabled', true);
