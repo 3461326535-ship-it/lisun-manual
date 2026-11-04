@@ -766,11 +766,14 @@ jQuery(function ($) {
         var done = [];
         var failed = [];
 
-        // 检查是否有保存的进度（续传场景）
-        var state = loadBatchState();
-        if (state && arraysEqual(state.ids, ids)) {
-            done = state.done || [];
-            failed = state.failed || [];
+        // 全量翻译必须从头处理，不能读取增量批次的浏览器进度。
+        // 只有“继续翻译”/增量批次才允许跳过旧的 done/failed 项。
+        if (!full) {
+            var state = loadBatchState();
+            if (state && arraysEqual(state.ids, ids)) {
+                done = state.done || [];
+                failed = state.failed || [];
+            }
         }
 
         showProgress(ids, done, failed);
