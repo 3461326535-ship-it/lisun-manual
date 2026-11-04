@@ -225,6 +225,14 @@ class Lisun_Manual_Glossary {
             if (($term['category'] ?? '') === self::CATEGORY_ERP) $erp_terms[] = $term;
             else $normal_terms[] = $term;
         }
+        // [修改时间：2026-11-04 15:26:18 +08:00] 未折叠术语按“本篇已用”优先，再按导入时间倒序。
+        usort($normal_terms, static function ($a, $b) {
+            $enabled_compare = ((int) !empty($b['enabled'])) <=> ((int) !empty($a['enabled']));
+            if ($enabled_compare !== 0) return $enabled_compare;
+            $date_compare = strtotime((string) ($b['import_date'] ?? '')) <=> strtotime((string) ($a['import_date'] ?? ''));
+            if ($date_compare !== 0) return $date_compare;
+            return strnatcasecmp((string) ($a['en'] ?? ''), (string) ($b['en'] ?? ''));
+        });
         wp_nonce_field('lisun_manual_post_terms', 'lisun_post_terms_nonce');
         ?>
         <div id="lisun-post-terms" data-post-id="<?php echo (int) $post->ID; ?>">
