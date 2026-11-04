@@ -218,18 +218,38 @@ class Lisun_Manual_Glossary {
             return;
         }
         $terms = self::post_term_config($post->ID);
+        // [修改时间：2026-11-04 15:23:01 +08:00] ERP 来源术语默认收起，避免详情页被大量 ERP 词条占满。
+        $erp_terms = [];
+        $normal_terms = [];
+        foreach ($terms as $term) {
+            if (($term['category'] ?? '') === self::CATEGORY_ERP) $erp_terms[] = $term;
+            else $normal_terms[] = $term;
+        }
         wp_nonce_field('lisun_manual_post_terms', 'lisun_post_terms_nonce');
         ?>
         <div id="lisun-post-terms" data-post-id="<?php echo (int) $post->ID; ?>">
             <p style="margin:0 0 8px;color:#666;font-size:12px;line-height:1.45;">勾选后可保存为本篇默认术语，或只应用于下一次翻译。</p>
             <input type="search" class="widefat" id="lisun-post-terms-search" placeholder="搜索中文或英文术语…" style="margin-bottom:8px;">
             <div id="lisun-post-terms-list" style="max-height:300px;overflow:auto;border:1px solid #dcdcde;background:#fff;padding:4px 6px;">
-                <?php foreach ($terms as $term): ?>
+                <?php foreach ($normal_terms as $term): ?>
                     <label class="lisun-post-term-row" data-search="<?php echo esc_attr(strtolower($term['zh'] . ' ' . $term['en'])); ?>" style="display:block;padding:4px 0;font-size:12px;line-height:1.3;">
                         <input type="checkbox" value="<?php echo esc_attr($term['term_id']); ?>" <?php checked($term['enabled']); ?>>
                         <span><?php echo esc_html($term['zh']); ?> → <?php echo esc_html($term['en']); ?></span>
                     </label>
                 <?php endforeach; ?>
+                <?php if ($erp_terms): ?>
+                    <details class="lisun-post-terms-erp" style="margin-top:6px;border-top:1px solid #dcdcde;padding-top:5px;">
+                        <summary style="cursor:pointer;font-weight:600;padding:3px 0;">ERP 术语（<?php echo count($erp_terms); ?>）</summary>
+                        <div>
+                            <?php foreach ($erp_terms as $term): ?>
+                                <label class="lisun-post-term-row" data-search="<?php echo esc_attr(strtolower($term['zh'] . ' ' . $term['en'])); ?>" style="display:block;padding:4px 0;font-size:12px;line-height:1.3;">
+                                    <input type="checkbox" value="<?php echo esc_attr($term['term_id']); ?>" <?php checked($term['enabled']); ?>>
+                                    <span><?php echo esc_html($term['zh']); ?> → <?php echo esc_html($term['en']); ?></span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                    </details>
+                <?php endif; ?>
             </div>
             <p style="margin:8px 0 4px;display:flex;gap:4px;flex-wrap:wrap;">
                 <button type="button" class="button button-small" id="lisun-post-terms-save">保存为本篇默认</button>
@@ -256,6 +276,7 @@ class Lisun_Manual_Glossary {
             $('#lisun-post-terms-search').on('input', function(){
                 var q = String($(this).val() || '').toLowerCase();
                 box.find('.lisun-post-term-row').each(function(){ $(this).toggle(!q || String($(this).data('search')).indexOf(q) >= 0); });
+                if (q && box.find('.lisun-post-terms-erp .lisun-post-term-row:visible').length) box.find('.lisun-post-terms-erp').prop('open', true);
             });
         });
         </script>
