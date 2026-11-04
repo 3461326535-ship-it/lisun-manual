@@ -974,8 +974,12 @@ class Lisun_Manual_Translate {
         ?>
         <script>
         jQuery(function($) {
-            $(document).on('click', '.lisun-translation-notice .notice-dismiss', function() {
-                var id = $(this).closest('.lisun-translation-notice').data('job-id');
+            // [修改时间：2026-11-04 15:38:00 +08:00] 先立即隐藏，再异步保存已读状态，不依赖 WP core dismiss 脚本。
+            $(document).on('click', '.lisun-translation-notice .notice-dismiss', function(e) {
+                e.preventDefault();
+                var $notice = $(this).closest('.lisun-translation-notice');
+                var id = $notice.data('job-id');
+                $notice.stop(true, true).fadeOut(120, function() { $(this).remove(); });
                 $.post(ajaxurl, {action:'lisun_dismiss_translation_notice', job_id:id, _nonce:'<?php echo esc_js(wp_create_nonce('lisun_translation_notice')); ?>'});
             });
         });
