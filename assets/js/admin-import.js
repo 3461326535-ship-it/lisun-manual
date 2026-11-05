@@ -1111,6 +1111,26 @@
         processNext(0);
     });
 
+    // [修改时间：2026-11-05 11:49:15 +08:00] 替换模式先查目标标题、链接和绑定，再允许单篇提交。
+    var replaceTarget = null;
+    $('input[name="lisun-import-mode"]').on('change', function () {
+        $('#lisun-replace-fields').toggle(this.value === 'replace');
+        replaceTarget = null;
+        $('#lisun-replace-target').empty();
+    });
+    $('#lisun-replace-post-id').on('input', function () { replaceTarget = null; $('#lisun-replace-target').empty(); });
+    $('#lisun-check-replace-target').on('click', function () {
+        var id = parseInt($('#lisun-replace-post-id').val(), 10) || 0;
+        $('#lisun-replace-target').text('正在核对...');
+        $.post(ajaxUrl, {action: 'lisun_replace_target', post_id: id, _nonce: nonce}, function (r) {
+            if (!r.success) { replaceTarget = null; $('#lisun-replace-target').text(r.data.message || '核对失败'); return; }
+            replaceTarget = r.data;
+            $('#lisun-replace-target').empty().append($('<strong/>').text('目标：' + r.data.title + '（ID ' + r.data.id + '）'))
+                .append($('<p/>').append($('<a/>', {href:r.data.url, target:'_blank', rel:'noopener'}).text(r.data.url)))
+                .append($('<p/>').text('远程绑定 ID：' + (r.data.remote_id || '未绑定')));
+        }).fail(function () { replaceTarget = null; $('#lisun-replace-target').text('核对请求失败'); });
+    });
+
     // 执行导入（单篇预览后）— 异步版，避免大文件 524
     $('#lisun-do-import').on('click', function () {
         var checked = $('#lisun-import-table tbody input[type="checkbox"]:checked');
@@ -1127,6 +1147,15 @@
         var title = $('#lisun-preview-title-input').val();
         var row = checked.first().closest('tr');
 
+        var replacing = $('input[name="lisun-import-mode"]:checked').val() === 'replace';
+        if (replacing && (!replaceTarget || replaceTarget.id !== (parseInt($('#lisun-replace-post-id').val(), 10) || 0))) {
+            $btn.prop('disabled', false); $spinner.removeClass('is-active'); alert('请先核对要替换的旧文章 ID'); return;
+        }
+        if (replacing && !confirm('将用 ' + storedName + ' 的解析正文替换「' + replaceTarget.title + '」(ID ' + replaceTarget.id + ')。\n原链接：' + replaceTarget.url + '\n远程绑定 ID：' + (replaceTarget.remote_id || '未绑定') + '\n旧正文和 DOCX 将保存为可撤回快照。确认替换？')) {
+            $btn.prop('disabled', false); $spinner.removeClass('is-active'); return;
+        }
+        var replaceData = replacing ? {replace_post_id: replaceTarget.id, replace_hash: replaceTarget.hash} : {};
+
         // 在结果区显示进度
         var $progressMsg = $('<div class="notice notice-info inline"><p>正在导入 ' + escapeHtml(storedName) + ' ...</p></div>');
         $results.append($progressMsg);
@@ -1134,25 +1163,30 @@
         $.ajax({
             url: ajaxUrl,
             method: 'POST',
-            data: {
+            data: $.extend({
                 action: 'lisun_do_import_async',
                 stored_name: storedName,
                 post_title: title,
                 _nonce: nonce
-            },
+            }, replaceData),
             timeout: 10000
         }).done(function (response) {
             if (response.success && response.data && response.data.job_id) {
                 pollImportJob(response.data.job_id, row, $btn, $spinner, $progressMsg, $results);
             } else {
                 // 降级到同步导入
+                if (replacing) {
+                    $progressMsg.remove(); $btn.prop('disabled', false); $spinner.removeClass('is-active');
+                    alert((response.data && response.data.message) || '覆盖导入未启动，请重新核对目标。');
+                    return;
+                }
                 $progressMsg.find('p').text('异步不可用，使用同步导入（大文件可能较慢）...');
-                $.post(ajaxUrl, {
+                $.post(ajaxUrl, $.extend({
                     action: 'lisun_do_import',
                     stored_name: storedName,
                     post_title: title,
                     _nonce: nonce
-                }, function (syncResp) {
+                }, replaceData), function (syncResp) {
                     handleImportResult(syncResp, row, $btn, $spinner, $progressMsg, $results);
                 }).fail(function () {
                     $progressMsg.remove();
