@@ -892,6 +892,9 @@
     $(document).on('click', '.lisun-preview-doc', function () {
         var storedName = $(this).data('stored');
         var defaultTitle = $(this).data('filename') || '';
+        directReplaceStored = null;
+        $('#lisun-replace-section').hide();
+        $('#lisun-do-import').text('导入当前预览的这篇');
         // [修改时间：2026-11-05 11:49:15 +08:00] 单篇预览只选当前文件，防止默认全选时覆盖导入了另一份 DOCX。
         $('#lisun-import-table tbody input[type="checkbox"]').prop('checked', false);
         $(this).closest('tr').find('input[type="checkbox"]').prop('checked', true);
@@ -1116,9 +1119,19 @@
 
     // [修改时间：2026-11-05 11:49:15 +08:00] 替换模式先查目标标题、链接和绑定，再允许单篇提交。
     var replaceTarget = null;
-    $('input[name="lisun-import-mode"]').on('change', function () {
-        $('#lisun-replace-fields').toggle(this.value === 'replace');
+    var directReplaceStored = null;
+    // [修改时间：2026-11-05 12:09:00 +08:00] 跳过解析预览，直接选文件并核对要替换的旧文章。
+    $(document).on('click', '.lisun-replace-doc', function () {
+        var row = $(this).closest('tr');
+        directReplaceStored = String(row.data('stored'));
         replaceTarget = null;
+        $('#lisun-import-table tbody input[type="checkbox"]').prop('checked', false);
+        row.find('input[type="checkbox"]').prop('checked', true);
+        $('#lisun-preview-section').hide();
+        $('#lisun-preview-title-input').val('');
+        $('#lisun-replace-source').text('将导入文件：' + row.find('td strong').text());
+        $('#lisun-replace-section, #lisun-import-actions').show();
+        $('#lisun-do-import').text('确认替换这篇说明书');
         $('#lisun-replace-target').empty();
     });
     $('#lisun-replace-post-id').on('input', function () { replaceTarget = null; $('#lisun-replace-target').empty(); });
@@ -1146,11 +1159,11 @@
         var $spinner = $btn.next('.spinner').addClass('is-active');
         var $results = $('#lisun-import-results');
 
-        var storedName = checked.first().closest('tr').data('stored');
+        var storedName = directReplaceStored || checked.first().closest('tr').data('stored');
         var title = $('#lisun-preview-title-input').val();
-        var row = checked.first().closest('tr');
+        var row = directReplaceStored ? $('#lisun-import-table tbody tr').filter(function () { return String($(this).data('stored')) === directReplaceStored; }) : checked.first().closest('tr');
 
-        var replacing = $('input[name="lisun-import-mode"]:checked').val() === 'replace';
+        var replacing = !!directReplaceStored;
         if (replacing && (!replaceTarget || replaceTarget.id !== (parseInt($('#lisun-replace-post-id').val(), 10) || 0))) {
             $btn.prop('disabled', false); $spinner.removeClass('is-active'); alert('请先核对要替换的旧文章 ID'); return;
         }

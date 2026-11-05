@@ -3,7 +3,7 @@
  * Plugin Name: LISUN Manual System
  * Plugin URI:  https://lisungroup.cn
  * Description: 双站说明书管理系统 — Word 批量导入、DeepSeek 自动翻译、双站同步、密码保护
- * Version:     1.1.37
+ * Version:     1.1.38
  * Author:      LISUN Group
  * License:     Proprietary
  * Text Domain: lisun-manual
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 // 插件常量
-define('LISUN_MANUAL_VERSION', '1.1.37');
+define('LISUN_MANUAL_VERSION', '1.1.38');
 define('LISUN_MANUAL_PATH', plugin_dir_path(__FILE__));
 define('LISUN_MANUAL_URL', plugin_dir_url(__FILE__));
 define('LISUN_MANUAL_FILE', __FILE__);

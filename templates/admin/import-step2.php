@@ -26,7 +26,7 @@ if (count($valid_docs) !== count($uploaded_docs)) {
 
     <h2><?php _e('执行导入', 'lisun-manual'); ?></h2>
     <p class="description">
-        <?php _e('预览解析结果，确认无误后执行导入。导入后的页面将保存为草稿，您可以在编辑器中进一步调整。', 'lisun-manual'); ?>
+        <?php _e('新建可预览或一键导入；替换旧文章可直接选文件并核对目标，无需预览。', 'lisun-manual'); ?>
     </p>
 
     <!-- 文件选择 -->
@@ -45,7 +45,7 @@ if (count($valid_docs) !== count($uploaded_docs)) {
                     <th width="30"><input type="checkbox" id="lisun-select-all" checked></th>
                     <th><?php _e('文件名', 'lisun-manual'); ?></th>
                     <th width="120"><?php _e('上传时间', 'lisun-manual'); ?></th>
-                    <th width="150"><?php _e('操作', 'lisun-manual'); ?></th>
+                    <th width="230"><?php _e('操作', 'lisun-manual'); ?></th>
                 </tr>
             </thead>
             <tbody>
@@ -60,6 +60,7 @@ if (count($valid_docs) !== count($uploaded_docs)) {
                             data-filename="<?php echo esc_attr(pathinfo($doc['filename'], PATHINFO_FILENAME)); ?>">
                             <?php _e('预览', 'lisun-manual'); ?>
                         </button>
+                        <button type="button" class="button button-small lisun-replace-doc" data-stored="<?php echo esc_attr($stored_name); ?>">替换旧文章</button>
                     </td>
                 </tr>
                 <?php endforeach; ?>
@@ -79,11 +80,14 @@ if (count($valid_docs) !== count($uploaded_docs)) {
                 <!-- 动态渲染预览 -->
             </div>
         </div>
-        <!-- [修改时间：2026-11-05 11:49:15 +08:00] 单篇覆盖导入必须先核对旧文章。 -->
+    </div>
+
+    <!-- [修改时间：2026-11-05 12:09:00 +08:00] 替换入口独立于解析预览，仍须核对旧文章。 -->
+    <div id="lisun-replace-section" style="display:none; margin-top:20px;">
+        <h3>替换现有说明书</h3>
+        <p id="lisun-replace-source"></p>
         <div class="postbox" style="padding:12px;margin-top:15px;max-width:850px;">
-            <label><input type="radio" name="lisun-import-mode" value="new" checked> 新建说明书</label>
-            <label style="margin-left:20px;"><input type="radio" name="lisun-import-mode" value="replace"> 替换现有说明书正文（保留链接和远程绑定）</label>
-            <div id="lisun-replace-fields" style="display:none;margin-top:12px;">
+            <div id="lisun-replace-fields" style="margin-top:12px;">
                 <label for="lisun-replace-post-id">旧文章 ID：</label>
                 <input type="number" min="1" id="lisun-replace-post-id" class="small-text" placeholder="ID">
                 <button type="button" class="button" id="lisun-check-replace-target">核对目标</button>
