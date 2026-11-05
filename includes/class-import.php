@@ -63,6 +63,7 @@ class Lisun_Manual_Import {
         add_action('wp_ajax_lisun_do_import_async', [__CLASS__, 'ajax_do_import_async']);
         // [修改时间：2026-11-05 11:49:15 +08:00] 覆盖导入的目标核对与撤回。
         add_action('wp_ajax_lisun_replace_target', [__CLASS__, 'ajax_replace_target']);
+        add_action('wp_ajax_lisun_search_replace_targets', [__CLASS__, 'ajax_search_replace_targets']);
         add_action('wp_ajax_lisun_undo_replace_import', [__CLASS__, 'ajax_undo_replace_import']);
         add_action('add_meta_boxes_manual', [__CLASS__, 'register_replace_undo_box']);
         // AJAX: 一键批量导入
@@ -1642,6 +1643,39 @@ class Lisun_Manual_Import {
             && get_post_meta($post_id, '_lisun_manual_lang', true) === 'zh'
             && current_user_can('edit_post', $post_id)
             && $hash !== '' && hash_equals(hash('sha256', $post->post_content), $hash);
+    }
+
+    // [修改时间：2026-11-05 13:04:00 +08:00] 仅搜索有权限编辑的中文说明书标题或产品型号，供逐文件指定替换目标。
+    public static function ajax_search_replace_targets() {
+        self::check_nonce();
+        $keyword = sanitize_text_field(wp_unslash($_POST['keyword'] ?? ''));
+        if (mb_strlen($keyword) < 2 || mb_strlen($keyword) > 80) {
+            wp_send_json_error(['message' => '请输入至少 2 个字的产品型号或标题关键词。']);
+        }
+        global $wpdb;
+        $like = '%' . $wpdb->esc_like($keyword) . '%';
+        $ids = $wpdb->get_col($wpdb->prepare(
+            "SELECT p.ID FROM {$wpdb->posts} p
+             WHERE p.post_type = 'manual' AND p.post_status NOT IN ('trash', 'auto-draft')
+             AND EXISTS (SELECT 1 FROM {$wpdb->postmeta} lang WHERE lang.post_id = p.ID AND lang.meta_key = '_lisun_manual_lang' AND lang.meta_value = 'zh')
+             AND (p.post_title LIKE %s OR EXISTS (SELECT 1 FROM {$wpdb->postmeta} model WHERE model.post_id = p.ID AND model.meta_key = 'product-no' AND model.meta_value LIKE %s) OR p.ID = %d)
+             ORDER BY p.post_modified DESC LIMIT 30",
+            $like, $like, ctype_digit($keyword) ? (int) $keyword : 0
+        ));
+        $matches = [];
+        foreach ($ids as $id) {
+            if (!current_user_can('edit_post', (int) $id)) continue;
+            $post = get_post($id);
+            $matches[] = [
+                'id' => (int) $id,
+                'title' => get_the_title($id),
+                'model' => get_post_meta($id, 'product-no', true),
+                'url' => get_permalink($id),
+                'remote_id' => get_post_meta($id, '_lisun_manual_remote_id', true),
+                'hash' => hash('sha256', $post->post_content),
+            ];
+        }
+        wp_send_json_success(['matches' => $matches]);
     }
 
     public static function ajax_replace_target() {
