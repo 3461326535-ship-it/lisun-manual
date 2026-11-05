@@ -1111,11 +1111,12 @@ class Lisun_Manual_Import {
                 throw new \Exception($post_id->get_error_message());
             }
 
+            if ($replace_id) update_post_meta($post_id, '_lisun_manual_replace_after_hash', hash('sha256', get_post_field('post_content', $post_id)));
+
             // 保存原始 .docx 路径（用于后续翻译管线）
-            self::save_docx_backup($post_id, $filepath);
+            self::save_docx_backup($post_id, $filepath, (bool) $replace_id);
 
             if ($replace_id) {
-                update_post_meta($post_id, '_lisun_manual_replace_after_hash', hash('sha256', get_post_field('post_content', $post_id)));
                 $post_title = get_the_title($post_id);
             }
 
@@ -1712,21 +1713,32 @@ class Lisun_Manual_Import {
         if (!empty($last['docx_copy']) && !copy($last['docx_copy'], $last['docx_path'])) wp_send_json_error(['message' => '原 DOCX 恢复失败，正文未改动。']);
         $updated = wp_update_post(['ID' => $post_id, 'post_content' => $last['content']], true);
         if (is_wp_error($updated)) wp_send_json_error(['message' => $updated->get_error_message()]);
+        if (!empty($last['docx_path'])) update_post_meta($post_id, '_lisun_manual_docx_path', $last['docx_path']);
+        else delete_post_meta($post_id, '_lisun_manual_docx_path');
         array_pop($history);
         update_post_meta($post_id, '_lisun_manual_replace_history', $history);
         delete_post_meta($post_id, '_lisun_manual_replace_after_hash');
         wp_send_json_success(['post_id' => $post_id]);
     }
 
-    private static function save_docx_backup($post_id, $filepath) {
-        if (!file_exists($filepath)) return;
+    private static function save_docx_backup($post_id, $filepath, $required = false) {
+        if (!file_exists($filepath)) {
+            if ($required) throw new \Exception('上传的 DOCX 已丢失。');
+            return;
+        }
 
         $backup_dir = LISUN_MANUAL_PATH . 'backups/';
-        if (!wp_mkdir_p($backup_dir)) return;
+        if (!wp_mkdir_p($backup_dir)) {
+            if ($required) throw new \Exception('无法保存新 DOCX，正文已更新，可从覆盖记录撤回。');
+            return;
+        }
 
         $ext = strtolower(pathinfo($filepath, PATHINFO_EXTENSION));
         $dest = $backup_dir . 'zh_' . $post_id . '.' . $ext;
-        @copy($filepath, $dest);
+        if (!@copy($filepath, $dest)) {
+            if ($required) throw new \Exception('新 DOCX 备份失败，正文已更新，可从覆盖记录撤回。');
+            return;
+        }
         update_post_meta($post_id, '_lisun_manual_docx_path', $dest);
     }
 

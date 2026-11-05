@@ -892,6 +892,9 @@
     $(document).on('click', '.lisun-preview-doc', function () {
         var storedName = $(this).data('stored');
         var defaultTitle = $(this).data('filename') || '';
+        // [修改时间：2026-11-05 11:49:15 +08:00] 单篇预览只选当前文件，防止默认全选时覆盖导入了另一份 DOCX。
+        $('#lisun-import-table tbody input[type="checkbox"]').prop('checked', false);
+        $(this).closest('tr').find('input[type="checkbox"]').prop('checked', true);
         previewDoc(storedName, defaultTitle);
     });
 
