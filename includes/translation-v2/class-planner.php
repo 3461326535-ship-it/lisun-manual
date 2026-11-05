@@ -35,6 +35,7 @@ class Lisun_Manual_V2_Planner {
 
         $pending = [];
         $reused = [];
+        $recovery_units = [];
         foreach ($prepared_by_key as $key => $prepared) {
             $old = $old_units[$key] ?? null;
             $can_reuse = !$force && !isset($force_unit_keys[(string) $key]) && $old
@@ -59,6 +60,16 @@ class Lisun_Manual_V2_Planner {
                     $boundary_probe,
                     $matching_terms
                 );
+                // [修改时间：2026-11-05 11:10:48 +08:00] 目标术语在旧译文中完全缺失时，强制重译当前单元；
+                // [修改时间：2026-11-05 11:10:48 +08:00] 部分命中（如 11/12）仍仅提示核对，正常单元继续复用。
+                foreach ((array) ($boundary['term_checks'] ?? []) as $check) {
+                    if ((int) ($check['expected_count'] ?? 0) > 0
+                        && (int) ($check['actual_count'] ?? 0) === 0) {
+                        $can_reuse = false;
+                        $recovery_units[(string) $key] = true;
+                        break;
+                    }
+                }
                 if (!empty($boundary['retranslation_required'])) {
                     $can_reuse = false;
                 } elseif (Lisun_Manual_V2_Term_Boundary::requires_boundary_retranslation($old['status'] ?? '')
@@ -91,6 +102,7 @@ class Lisun_Manual_V2_Planner {
             'pending' => $pending,
             'reused' => $reused,
             'reuse_count' => count($reused),
+            'recovery_unit_keys' => array_keys($recovery_units),
         ];
     }
 
