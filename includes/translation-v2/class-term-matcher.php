@@ -165,10 +165,6 @@ class Lisun_Manual_V2_Term_Matcher {
         if ($letters === '') return true;
         if (strlen($letters) > 1 && strtoupper($letters) === $letters) return true;
 
-        // Hyphenated Title Case is ordinary sentence text, not a camel-case
-        // product name: Over-Temperature must normalize to Over-temperature.
-        if (strpos((string) $word, '-') !== false) return false;
-
         // Preserve camelCase/PascalCase only when an uppercase letter occurs
         // after the first letter. A simple initial capital is normalized.
         return preg_match('/^[A-Za-z][A-Za-z\x{2019}\'-]*[A-Z][A-Za-z\x{2019}\'-]*$/u', (string) $word) === 1;

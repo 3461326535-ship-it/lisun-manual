@@ -4259,48 +4259,6 @@ RULES:
 
         $html = preg_replace($pattern, '$1', $html);
 
-        // 表格高度必须由内容自然撑开。编辑器/TinyMCE 可能会把计算后的
-        // height 写入 table、tr、th、td 的 style 或 height 属性；如果保留，
-        // 固定布局会把短内容强行拉伸成很高的行。只处理表格元素，避免误删
-        // 图片等非表格元素自身需要的 height。
-        $table_tags = 'table|thead|tbody|tfoot|tr|th|td';
-        $html = preg_replace_callback(
-            '/<(' . $table_tags . ')\b([^>]*)>/i',
-            static function ($match) {
-                $attrs = $match[2];
-
-                // 同时兼容 height="24px"、height='24' 和无引号属性。
-                $attrs = preg_replace(
-                    '/\s+height\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>]+)/i',
-                    '',
-                    $attrs
-                );
-
-                $attrs = preg_replace_callback(
-                    '/(\s+style\s*=\s*)(["\'])(.*?)\2/is',
-                    static function ($style_match) {
-                        $style = preg_replace(
-                            '/(^|;)\s*height\s*:\s*[^;]+;?/i',
-                            '$1',
-                            $style_match[3]
-                        );
-                        $style = trim(preg_replace('/;{2,}/', ';', $style));
-                        $style = trim($style, " ;\t\r\n");
-
-                        if ($style === '') {
-                            return '';
-                        }
-
-                        return $style_match[1] . $style_match[2] . $style . $style_match[2];
-                    },
-                    $attrs
-                );
-
-                return '<' . $match[1] . $attrs . '>';
-            },
-            $html
-        );
-
         // 清洗后可能留下空的 style=""，清理掉
         $html = preg_replace('/\s+style\s*=\s*""\s*/i', ' ', $html);
         $html = preg_replace('/\s+style\s*=\s*\'\'\s*/i', ' ', $html);

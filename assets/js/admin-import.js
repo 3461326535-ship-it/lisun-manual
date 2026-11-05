@@ -892,12 +892,6 @@
     $(document).on('click', '.lisun-preview-doc', function () {
         var storedName = $(this).data('stored');
         var defaultTitle = $(this).data('filename') || '';
-        directReplaceStored = null;
-        $('#lisun-replace-section').hide();
-        $('#lisun-do-import').text('导入当前预览的这篇');
-        // [修改时间：2026-11-05 11:49:15 +08:00] 单篇预览只选当前文件，防止默认全选时覆盖导入了另一份 DOCX。
-        $('#lisun-import-table tbody input[type="checkbox"]').prop('checked', false);
-        $(this).closest('tr').find('input[type="checkbox"]').prop('checked', true);
         previewDoc(storedName, defaultTitle);
     });
 
@@ -909,19 +903,7 @@
             return;
         }
 
-        // [修改时间：2026-11-05 13:04:00 +08:00] 批量任务逐行固定目标快照，禁止两个文件覆盖同一旧文章。
-        var targets = {};
-        var replacements = 0;
-        var duplicates = [];
-        checked.each(function () {
-            var target = $(this).closest('tr').data('replaceTarget');
-            if (!target) return;
-            replacements++;
-            if (targets[target.id]) duplicates.push('#' + target.id);
-            targets[target.id] = true;
-        });
-        if (duplicates.length) { alert('多篇文件指定了同一篇旧文章：' + duplicates.join('、') + '。请分别指定目标。'); return; }
-        if (!confirm('将处理 ' + checked.length + ' 篇：替换 ' + replacements + ' 篇，新建 ' + (checked.length - replacements) + ' 篇。请核对每行目标，确定继续？')) return;
+        if (!confirm('将一键导入全部 ' + checked.length + ' 篇说明书（跳过预览）。确定？')) return;
 
         var $btn = $(this).prop('disabled', true);
         var $spinner = $btn.next('.spinner').addClass('is-active');
@@ -982,7 +964,6 @@
             items.push({
                 storedName: $tr.data('stored'),
                 filename: $tr.find('td:eq(1) strong').text(),
-                target: $tr.data('replaceTarget') || null,
                 $row: $tr
             });
         });
@@ -1019,7 +1000,6 @@
             }
 
             var item = items[index];
-            var replaceData = item.target ? {replace_post_id: item.target.id, replace_hash: item.target.hash} : {};
             $overlayFile.text('正在处理：' + item.filename);
             updateProgress();
 
@@ -1083,10 +1063,6 @@
             }
 
             function fallbackToSyncImport() {
-                if (item.target) {
-                    completeBatchItem(false, '替换请求未被异步接口确认；已停止此篇，请核对旧文章状态后重试。');
-                    return;
-                }
                 $.ajax({
                     url: ajaxUrl,
                     type: 'POST',
@@ -1113,12 +1089,12 @@
             $.ajax({
                 url: ajaxUrl,
                 type: 'POST',
-                data: $.extend({
+                data: {
                     action: 'lisun_do_import_async',
                     stored_name: item.storedName,
                     post_title: '',
                     _nonce: nonce
-                }, replaceData),
+                },
                 timeout: 10000
             }).done(function (response) {
                 if (response.success && response.data && response.data.job_id) {
@@ -1135,72 +1111,6 @@
         processNext(0);
     });
 
-    // [修改时间：2026-11-05 11:49:15 +08:00] 替换模式先查目标标题、链接和绑定，再允许单篇提交。
-    var replaceTarget = null;
-    var directReplaceStored = null;
-    var searchSequence = 0;
-    // [修改时间：2026-11-05 13:04:00 +08:00] 各文件行分别保存目标；切换行时读取各自的指定结果。
-    $(document).on('click', '.lisun-replace-doc', function () {
-        var row = $(this).closest('tr');
-        searchSequence++;
-        directReplaceStored = String(row.data('stored'));
-        replaceTarget = row.data('replaceTarget') || null;
-        $('#lisun-preview-section').hide();
-        $('#lisun-preview-title-input').val('');
-        $('#lisun-replace-source').text('将导入文件：' + row.find('td strong').text());
-        $('#lisun-replace-section, #lisun-import-actions').show();
-        $('#lisun-do-import').text('确认替换这篇说明书');
-        $('#lisun-replace-search, #lisun-replace-matches').val('').empty();
-        showSelectedTarget();
-    });
-    function showSelectedTarget() {
-        var $box = $('#lisun-replace-target').empty();
-        $('#lisun-clear-replace-target').toggle(!!replaceTarget);
-        if (!replaceTarget) { $box.text('此文件尚未指定旧文章，批量导入时会新建。'); return; }
-        $box.append($('<strong/>').text('已指定：' + replaceTarget.title + '（ID ' + replaceTarget.id + '）'))
-            .append($('<p/>').text('产品型号：' + (replaceTarget.model || '未填写')))
-            .append($('<p/>').append($('<a/>', {href:replaceTarget.url, target:'_blank', rel:'noopener'}).text(replaceTarget.url)))
-            .append($('<p/>').text('远程绑定 ID：' + (replaceTarget.remote_id || '未绑定')));
-    }
-    $('#lisun-replace-search').on('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); $('#lisun-search-replace-targets').trigger('click'); }
-    });
-    $('#lisun-search-replace-targets').on('click', function () {
-        var keyword = $.trim($('#lisun-replace-search').val());
-        var source = directReplaceStored;
-        var seq = ++searchSequence;
-        if (keyword.length < 2) { alert('请输入至少 2 个字的产品型号或标题关键词。'); return; }
-        var $matches = $('#lisun-replace-matches').text('正在搜索...');
-        $.post(ajaxUrl, {action:'lisun_search_replace_targets', keyword:keyword, _nonce:nonce}, function (r) {
-            if (seq !== searchSequence || source !== directReplaceStored) return;
-            $matches.empty();
-            if (!r.success) { $matches.text((r.data && r.data.message) || '搜索失败'); return; }
-            if (!r.data.matches.length) { $matches.text('没有找到可编辑的中文说明书。'); return; }
-            r.data.matches.forEach(function (target) {
-                var $item = $('<div/>', {css:{padding:'8px',borderBottom:'1px solid #ddd'}});
-                $item.append($('<span/>').text(target.title + ' · 型号 ' + (target.model || '未填写') + ' · ID ' + target.id + ' '));
-                $('<button/>', {type:'button', 'class':'button button-small', text:'选为替换目标'}).on('click', function () {
-                    var duplicate = false;
-                    $('#lisun-import-table tbody tr').each(function () {
-                        if (String($(this).data('stored')) !== source && $(this).data('replaceTarget') && $(this).data('replaceTarget').id === target.id) duplicate = true;
-                    });
-                    if (duplicate) { alert('这篇旧文章已指定给另一个文件，请先取消那个文件的指定。'); return; }
-                    replaceTarget = target;
-                    $('#lisun-import-table tbody tr').filter(function () { return String($(this).data('stored')) === source; })
-                        .data('replaceTarget', target).find('.lisun-row-target').text('替换：' + target.title + '（ID ' + target.id + '）');
-                    showSelectedTarget();
-                }).appendTo($item);
-                $matches.append($item);
-            });
-        }).fail(function () { if (seq === searchSequence && source === directReplaceStored) $matches.text('搜索请求失败'); });
-    });
-    $('#lisun-clear-replace-target').on('click', function () {
-        $('#lisun-import-table tbody tr').filter(function () { return String($(this).data('stored')) === directReplaceStored; })
-            .removeData('replaceTarget').find('.lisun-row-target').text('未指定：新建文章');
-        replaceTarget = null;
-        showSelectedTarget();
-    });
-
     // 执行导入（单篇预览后）— 异步版，避免大文件 524
     $('#lisun-do-import').on('click', function () {
         var checked = $('#lisun-import-table tbody input[type="checkbox"]:checked');
@@ -1213,18 +1123,9 @@
         var $spinner = $btn.next('.spinner').addClass('is-active');
         var $results = $('#lisun-import-results');
 
-        var storedName = directReplaceStored || checked.first().closest('tr').data('stored');
+        var storedName = checked.first().closest('tr').data('stored');
         var title = $('#lisun-preview-title-input').val();
-        var row = directReplaceStored ? $('#lisun-import-table tbody tr').filter(function () { return String($(this).data('stored')) === directReplaceStored; }) : checked.first().closest('tr');
-
-        var replacing = !!directReplaceStored;
-        if (replacing && !replaceTarget) {
-            $btn.prop('disabled', false); $spinner.removeClass('is-active'); alert('请先搜索并选择要替换的旧文章。'); return;
-        }
-        if (replacing && !confirm('将用 ' + storedName + ' 的解析正文替换「' + replaceTarget.title + '」(ID ' + replaceTarget.id + ')。\n原链接：' + replaceTarget.url + '\n远程绑定 ID：' + (replaceTarget.remote_id || '未绑定') + '\n旧正文和 DOCX 将保存为可撤回快照。确认替换？')) {
-            $btn.prop('disabled', false); $spinner.removeClass('is-active'); return;
-        }
-        var replaceData = replacing ? {replace_post_id: replaceTarget.id, replace_hash: replaceTarget.hash} : {};
+        var row = checked.first().closest('tr');
 
         // 在结果区显示进度
         var $progressMsg = $('<div class="notice notice-info inline"><p>正在导入 ' + escapeHtml(storedName) + ' ...</p></div>');
@@ -1233,30 +1134,25 @@
         $.ajax({
             url: ajaxUrl,
             method: 'POST',
-            data: $.extend({
+            data: {
                 action: 'lisun_do_import_async',
                 stored_name: storedName,
                 post_title: title,
                 _nonce: nonce
-            }, replaceData),
+            },
             timeout: 10000
         }).done(function (response) {
             if (response.success && response.data && response.data.job_id) {
                 pollImportJob(response.data.job_id, row, $btn, $spinner, $progressMsg, $results);
             } else {
                 // 降级到同步导入
-                if (replacing) {
-                    $progressMsg.remove(); $btn.prop('disabled', false); $spinner.removeClass('is-active');
-                    alert((response.data && response.data.message) || '覆盖导入未启动，请重新核对目标。');
-                    return;
-                }
                 $progressMsg.find('p').text('异步不可用，使用同步导入（大文件可能较慢）...');
-                $.post(ajaxUrl, $.extend({
+                $.post(ajaxUrl, {
                     action: 'lisun_do_import',
                     stored_name: storedName,
                     post_title: title,
                     _nonce: nonce
-                }, replaceData), function (syncResp) {
+                }, function (syncResp) {
                     handleImportResult(syncResp, row, $btn, $spinner, $progressMsg, $results);
                 }).fail(function () {
                     $progressMsg.remove();

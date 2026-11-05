@@ -106,13 +106,6 @@ class Lisun_Manual_V2_Materializer {
         // output after slots are expanded so the rule also covers HTML/tag
         // boundaries and historical snapshots.
         $result = self::normalize_public_punctuation_spacing($result);
-        // Table labels use sentence case consistently. Provider output may
-        // vary between Title Case and sentence case from row to row; apply
-        // the document rule only inside td/th text nodes, preserving acronyms
-        // such as UV, USB and LED and leaving HTML attributes untouched.
-        if (preg_match('/<(?:td|th)\b/i', $result)) {
-            $result = self::normalize_table_cell_case($result);
-        }
         if ($field === 'title') {
             $result = html_entity_decode(wp_strip_all_tags($result), ENT_QUOTES | ENT_HTML5, 'UTF-8');
             $result = self::title_case($result);
@@ -399,26 +392,5 @@ class Lisun_Manual_V2_Materializer {
             if (strlen($match[0]) > 1 && strtoupper($match[0]) === $match[0]) return $match[0];
             return strtoupper($match[1]) . strtolower($match[2]);
         }, (string) $text);
-    }
-
-    private static function normalize_table_cell_case($html) {
-        $tokens = Lisun_Manual_V2_Html_Tokenizer::tokenize((string) $html);
-        $depth = 0;
-        $started = false;
-        foreach ($tokens as &$token) {
-            if (($token['type'] ?? '') === 'start' && in_array($token['tag'] ?? '', ['td', 'th'], true)) {
-                $depth++;
-                $started = false;
-            } elseif (($token['type'] ?? '') === 'end' && in_array($token['tag'] ?? '', ['td', 'th'], true)) {
-                $depth = max(0, $depth - 1);
-                $started = false;
-            } elseif ($depth > 0 && ($token['type'] ?? '') === 'text' && trim((string) $token['raw']) !== '') {
-                $context = $started ? 'body' : 'sentence_start';
-                $token['raw'] = Lisun_Manual_V2_Term_Matcher::apply_case($token['raw'], $context);
-                if (preg_match('/[A-Za-z]/', (string) $token['raw'])) $started = true;
-            }
-        }
-        unset($token);
-        return Lisun_Manual_V2_Html_Tokenizer::untokenize($tokens);
     }
 }

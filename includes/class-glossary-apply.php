@@ -139,10 +139,7 @@ class Lisun_Manual_Glossary_Apply {
         $unlocks = get_option('lisun_glossary_manual_unlocks', []);
         $unlocks = is_array($unlocks) ? $unlocks : [];
         $unlocks[$term_id] = [
-            // 解锁状态按“当前术语版本”校验，不能写整个术语库的全局版本。
-            // 之前写 glossary_revision 会导致接口提示成功，但刷新预览后立即失效。
-            'revision' => (int) $preview['term_revision'],
-            'glossary_revision' => (int) $preview['glossary_revision'],
+            'revision' => (int) $preview['glossary_revision'],
             'user_id' => get_current_user_id(),
             'created_at' => current_time('mysql'),
         ];
@@ -647,7 +644,7 @@ class Lisun_Manual_Glossary_Apply {
             foreach ((array) ($batch['applications'] ?? []) as $application) {
                 if ((int) ($application['post_id'] ?? 0) !== $post_id) continue;
                 $application['batch_id'] = (string) ($batch['batch_id'] ?? '');
-                $application['scope'] = (string) ($batch['scope'] ?? 'legacy');
+                $application['scope'] = (string) ($batch['scope'] ?? 'global');
                 $application['batch_status'] = (string) ($batch['status'] ?? '');
                 $records[] = $application;
                 $matched_application = true;
@@ -672,7 +669,7 @@ class Lisun_Manual_Glossary_Apply {
                     'post_id' => $post_id,
                     'title' => get_the_title($post_id) ?: ('#' . $post_id),
                     'status' => (string) ($batch['status'] ?? 'queued'),
-                    'scope' => (string) ($batch['scope'] ?? 'legacy'),
+                    'scope' => ($batch['scope'] ?? '') === 'single' ? 'single' : 'global',
                     'batch_id' => (string) ($batch['batch_id'] ?? ''),
                     'time' => (string) ($batch['updated_at'] ?? $batch['created_at'] ?? ''),
                 ];
@@ -724,7 +721,7 @@ class Lisun_Manual_Glossary_Apply {
                     'term_id' => (string) ($payload['term_id'] ?? ($row['batch_term_id'] ?? '')),
                     'mode' => (string) ($payload['mode'] ?? 'direct'),
                     'status' => $status === 'done' ? 'done' : (($status === 'failed') ? 'failed' : 'processing'),
-                    'scope' => (string) ($details['scope'] ?? 'legacy'),
+                    'scope' => (($details['scope'] ?? '') === 'single') ? 'single' : 'global',
                     'batch_id' => (string) ($row['batch_id'] ?? ''),
                     'updated' => (int) ($result['updated'] ?? 0),
                     'requests' => (int) ($result['requests'] ?? 0),
@@ -927,99 +924,9 @@ class Lisun_Manual_Glossary_Apply {
         $post_history = get_post_meta((int) $post_id, $post_history_key, true);
         $post_history = is_array($post_history) ? $post_history : [];
         $record['batch_id'] = $batch_id;
-        $record['scope'] = (string) ($details['scope'] ?? 'legacy');
+        $record['scope'] = (($details['scope'] ?? 'global') === 'single') ? 'single' : 'global';
         array_unshift($post_history, $record);
         update_post_meta((int) $post_id, $post_history_key, array_slice($post_history, 0, 20));
-    }
-
-    /**
-     * Record glossary terms demonstrably applied by a successful full
-     * translation. Selection alone never creates a successful record.
-     */
-    public static function record_full_translation_applications($post_id, $revision_id, $term_ids) {
-        $post_id = absint($post_id);
-        $revision_id = absint($revision_id);
-        $term_ids = array_values(array_unique(array_filter(array_map('strval', (array) $term_ids))));
-        if ($post_id <= 0 || $revision_id <= 0 || !$term_ids || !Lisun_Manual_Glossary::is_enabled()) return [];
-
-        self::maybe_create_table();
-        $terms = Lisun_Manual_Glossary::get_by_id();
-        $recorded = [];
-        $successful_pairs = [];
-        global $wpdb;
-
-        foreach ($term_ids as $term_id) {
-            $term = $terms[$term_id] ?? null;
-            if (!is_array($term)) continue;
-            $audit = self::audit_current_term_application($post_id, $term_id);
-            if (!is_array($audit)) continue;
-            $expected = (int) ($audit['hit_count'] ?? 0);
-            if ($expected <= 0) continue;
-
-            $visible = (int) ($audit['visible_applied_count'] ?? 0);
-            $missing = (int) ($audit['visible_missing_count'] ?? $audit['unapplied_count'] ?? 0);
-            $status = $visible > 0 ? 'done' : 'failed';
-            $warning = $visible > 0 && $missing > 0;
-            $batch_id = 'fulltr_' . substr(hash('sha256', $post_id . '|' . $revision_id . '|' . $term_id), 0, 40);
-            // Publication retries for the same committed revision must not
-            // duplicate either the batch or the per-post history entry.
-            if (self::get_batch($batch_id)) continue;
-
-            $preview = [
-                'term' => self::storage_term_snapshot($term),
-                'glossary_revision' => (int) get_option('lisun_glossary_revision', 0),
-                'scope' => 'single',
-                'post_id' => $post_id,
-                'skipped' => [],
-                'candidates' => [[
-                    'post_id' => $post_id,
-                    'title' => get_the_title($post_id) ?: ('#' . $post_id),
-                    'mode' => 'full_translate',
-                    'audit' => $audit,
-                ]],
-            ];
-            $inserted = self::insert_batch($batch_id, $preview, 1, [
-                'scope' => 'single',
-                'post_id' => $post_id,
-                'processed_post_ids' => [$post_id],
-                'source' => 'full_translate',
-            ]);
-            if (is_wp_error($inserted) && !self::get_batch($batch_id)) continue;
-
-            $result = [
-                'pushed' => true,
-                'revision_id' => $revision_id,
-                'post_apply_audit' => $audit,
-                'visible_applied_occurrences' => $visible,
-                'stable_anchor_occurrences' => (int) ($audit['stable_anchor_count'] ?? 0),
-                'expected_occurrences' => $expected,
-                'unapplied_count' => $missing,
-                'warning_only' => $warning,
-                'warning_message' => $warning ? '全量翻译已完成，但部分术语出现次数需人工核对' : '',
-                'incomplete' => $status === 'failed',
-                'code' => $status === 'failed' ? 'glossary_apply_incomplete' : '',
-            ];
-            $error = $status === 'failed' ? '全量翻译后英文译文中未发现目标术语' : '';
-            self::record_job_result($batch_id, $post_id, $term_id, 'full_translate', $status, $result, $error);
-
-            $batch = self::get_batch($batch_id);
-            $details = json_decode((string) ($batch['details_json'] ?? ''), true);
-            $details = is_array($details) ? $details : [];
-            $details['source'] = 'full_translate';
-            $wpdb->update(self::table_name(), [
-                'status' => $status === 'done' ? 'done' : 'finished_with_errors',
-                'details_json' => wp_json_encode($details),
-                'updated_at' => current_time('mysql'),
-            ], ['batch_id' => $batch_id]);
-
-            $recorded[] = ['term_id' => $term_id, 'status' => $status, 'warning' => $warning];
-            if ($status === 'done') $successful_pairs[] = ['term_id' => $term_id, 'post_id' => $post_id];
-        }
-
-        if ($successful_pairs) Lisun_Manual_Glossary::add_articles_to_term_scopes($successful_pairs);
-        self::$latest_cache = [];
-        self::$list_state_cache = null;
-        return $recorded;
     }
 
     /** Return recent global and single-article application records for a term. */
@@ -1188,7 +1095,7 @@ class Lisun_Manual_Glossary_Apply {
                 $details['applications']
             );
             $details['applications'] = self::enrich_undo_state($details['applications']);
-            $scope = (string) ($details['scope'] ?? 'legacy');
+            $scope = (string) ($details['scope'] ?? 'global');
             $post_id = absint($details['post_id'] ?? 0);
             $candidates = (array) ($details['candidates'] ?? []);
             if (!$post_id && count($candidates) === 1) {
@@ -1196,10 +1103,7 @@ class Lisun_Manual_Glossary_Apply {
             }
             $history[] = [
                 'batch_id' => (string) ($row['batch_id'] ?? ''),
-                // Preserve all/selected/single. Older code collapsed every
-                // non-single batch to "global", which made a selected one-
-                // article run look identical to a true all-matches run.
-                'scope' => $scope !== '' ? $scope : 'legacy',
+                'scope' => $scope === 'single' ? 'single' : 'global',
                 'post_id' => $post_id,
                 'title' => $post_id ? (get_the_title($post_id) ?: ('#' . $post_id)) : '',
                 'status' => (string) ($row['status'] ?? ''),
@@ -1538,22 +1442,17 @@ class Lisun_Manual_Glossary_Apply {
                         && empty($application['pushed']))
                     || (($application['status'] ?? '') === 'failed' && !empty($application['local_updated']));
                 $post_id = absint($application['post_id'] ?? 0);
-                // history() is newest-first. Only the newest *effective state*
-                // may decide the article. A failed attempt that explicitly did
-                // not save or push must not hide an older successful apply.
+                // history() is newest-first; only the newest application
+                // record for an article may decide its current state.
                 if ($post_id > 0 && isset($seen_latest_application[$post_id])) continue;
+                if ($post_id > 0) $seen_latest_application[$post_id] = true;
                 // An undo is the newest state for this article.  Keep it
                 // authoritative so a refreshed preview cannot fall back to
                 // an older successful application and show the article as
                 // applied again.
-                if ($post_id > 0 && !empty($application['undone'])) {
-                    $seen_latest_application[$post_id] = true;
-                    continue;
-                }
+                if ($post_id > 0 && !empty($application['undone'])) continue;
                 if ($post_id > 0 && $application_local_only && !isset($local_only_by_post[$post_id])) {
                     $local_only_by_post[$post_id] = $application;
-                    $seen_latest_application[$post_id] = true;
-                    continue;
                 }
                 // A pushed revision with a partial visible count is a warning,
                 // but a zero-match result is a real application failure and
@@ -1569,7 +1468,6 @@ class Lisun_Manual_Glossary_Apply {
                 if ($post_id > 0
                     && !$committed_application
                     && (!empty($application['incomplete']) || $hard_visible_failure)
-                    && (!empty($application['local_updated']) || !empty($application['pushed']))
                     && !isset($incomplete_by_post[$post_id])) {
                     if ($hard_visible_failure) {
                         $application['incomplete'] = true;
@@ -1577,14 +1475,12 @@ class Lisun_Manual_Glossary_Apply {
                         $application['error_code'] = 'glossary_apply_incomplete';
                     }
                     $incomplete_by_post[$post_id] = $application;
-                    $seen_latest_application[$post_id] = true;
                 }
                 if (!$committed_application) continue;
                 // Older audit rows may say done even though the remote push
                 // failed. Only an actually pushed result proves application.
                 if (array_key_exists('pushed', $application) && empty($application['pushed'])) continue;
                 if ($post_id <= 0 || isset($successful_by_post[$post_id])) continue;
-                $seen_latest_application[$post_id] = true;
                 $application_snapshot = self::normalize_term_snapshot(
                     is_array($application['term_snapshot'] ?? null)
                         ? $application['term_snapshot']
@@ -1710,7 +1606,7 @@ class Lisun_Manual_Glossary_Apply {
                 $candidate['post_apply_audit'] = $applied_audit;
                 $candidate['applied_at'] = (string) ($match['record']['time'] ?? ($match['batch']['updated_at'] ?? ''));
                 $candidate['applied_batch_id'] = (string) ($match['batch']['batch_id'] ?? '');
-                $candidate['applied_scope'] = (string) ($match['batch']['scope'] ?? 'legacy');
+                $candidate['applied_scope'] = (string) ($match['batch']['scope'] ?? 'global');
                 $candidate['term_anomaly_units'] = (int) ($match['record']['term_anomaly_units'] ?? 0);
                 $candidate['term_anomalies'] = is_array($match['record']['term_anomalies'] ?? null)
                     ? $match['record']['term_anomalies'] : [];
@@ -1737,7 +1633,7 @@ class Lisun_Manual_Glossary_Apply {
                 'pending_articles' => $pending,
                 'latest' => $latest ? [
                     'batch_id' => (string) ($latest['batch_id'] ?? ''),
-                    'scope' => (string) ($latest['scope'] ?? 'legacy'),
+                    'scope' => (string) ($latest['scope'] ?? 'global'),
                     'status' => (string) ($latest['status'] ?? ''),
                     'created_at' => (string) ($latest['created_at'] ?? ''),
                     'updated_at' => (string) ($latest['updated_at'] ?? ''),
@@ -1819,13 +1715,7 @@ class Lisun_Manual_Glossary_Apply {
         if (!is_array($unlocks) || !is_array($unlocks[(string) $term_id] ?? null)) return false;
         $entry = $unlocks[(string) $term_id];
         $created = strtotime((string) ($entry['created_at'] ?? ''));
-        $stored_revision = (int) ($entry['revision'] ?? -1);
-        $matches_term_revision = $stored_revision === (int) $revision;
-        // 兼容修复前 30 分钟内已写入的记录：旧代码误把全局 glossary_revision
-        // 存在 revision 字段中，且没有独立的 glossary_revision 标记。
-        $matches_legacy_global_revision = !array_key_exists('glossary_revision', $entry)
-            && $stored_revision === (int) get_option('lisun_glossary_revision', -2);
-        return ($matches_term_revision || $matches_legacy_global_revision)
+        return (int) ($entry['revision'] ?? -1) === (int) $revision
             && $created > 0
             && $created >= (time() - 1800);
     }
@@ -2495,10 +2385,9 @@ class Lisun_Manual_Glossary_Apply {
                 'term' => $preview['term'],
                 'skipped' => $preview['skipped'],
                 'candidates' => $preview['candidates'],
-                'scope' => (string) ($meta['scope'] ?? ($preview['scope'] ?? 'legacy')),
+                'scope' => (string) ($meta['scope'] ?? ($preview['scope'] ?? 'global')),
                 'post_id' => absint($meta['post_id'] ?? ($preview['post_id'] ?? 0)),
                 'manual_unlock' => !empty($meta['manual_unlock']),
-                'source' => (string) ($meta['source'] ?? 'glossary_apply'),
                 'processed_post_ids' => isset($meta['processed_post_ids']) ? array_map('intval', $meta['processed_post_ids']) : [],
             ]),
             'created_by' => get_current_user_id(),
@@ -2710,16 +2599,6 @@ class Lisun_Manual_Glossary_Apply {
                 "SELECT status, result_json FROM {$queue} WHERE batch_id = %s AND action = 'glossary_apply'",
                 $batch_id
             ), ARRAY_A);
-            // Full-translation audits are intentionally stored without fake
-            // queue jobs. Preserve their explicit terminal status instead of
-            // treating an empty queue as a successful glossary-apply batch.
-            if (!$rows) {
-                $batch = self::get_batch($batch_id);
-                $details = json_decode((string) ($batch['details_json'] ?? ''), true);
-                if (is_array($details) && ($details['source'] ?? '') === 'full_translate') {
-                    return (string) ($batch['status'] ?? 'done');
-                }
-            }
             $known_counts = ['pending' => 0, 'processing' => 0, 'done' => 0, 'failed' => 0, 'warnings' => 0];
             foreach ((array) $rows as $row) {
                 $status = (string) ($row['status'] ?? 'failed');

@@ -61,82 +61,12 @@ class Lisun_Manual_Import {
         add_action('wp_ajax_lisun_do_import', [__CLASS__, 'ajax_do_import']);
         // AJAX: 执行导入（异步版）
         add_action('wp_ajax_lisun_do_import_async', [__CLASS__, 'ajax_do_import_async']);
-        // [修改时间：2026-11-05 11:49:15 +08:00] 覆盖导入的目标核对与撤回。
-        add_action('wp_ajax_lisun_replace_target', [__CLASS__, 'ajax_replace_target']);
-        add_action('wp_ajax_lisun_search_replace_targets', [__CLASS__, 'ajax_search_replace_targets']);
-        add_action('wp_ajax_lisun_undo_replace_import', [__CLASS__, 'ajax_undo_replace_import']);
-        add_action('add_meta_boxes_manual', [__CLASS__, 'register_replace_undo_box']);
         // AJAX: 一键批量导入
         add_action('wp_ajax_lisun_batch_import', [__CLASS__, 'ajax_batch_import']);
         // AJAX: 获取导入/解析进度
         add_action('wp_ajax_lisun_import_status', [__CLASS__, 'ajax_import_status']);
         // AJAX: 在文章详情页手动生成 SEO
         add_action('wp_ajax_lisun_generate_manual_seo', [__CLASS__, 'ajax_generate_manual_seo']);
-
-        // 产品页保存后异步刷新所有关联说明书的视频；说明书保存/导入时也立即校准。
-        add_action('save_post_products', [__CLASS__, 'queue_product_video_sync'], 20, 3);
-        // 必须在型号框、媒体框以及其他插件的保存回调之后运行，避免首次同步结果被空表单覆盖。
-        add_action('save_post_manual', [__CLASS__, 'sync_manual_videos_after_save'], 999, 3);
-        add_action('lisun_sync_product_videos_event', [__CLASS__, 'sync_product_videos_for_manual'], 10, 1);
-        add_action('lisun_sync_all_product_videos_event', [__CLASS__, 'sync_all_product_videos'], 10, 0);
-        add_action('lisun_sync_all_product_videos_once_event', [__CLASS__, 'sync_all_product_videos'], 10, 0);
-        add_action('init', [__CLASS__, 'ensure_product_video_cron']);
-    }
-
-    /** 产品保存后排队处理，避免阻塞产品编辑请求。 */
-    public static function queue_product_video_sync($post_id, $post = null, $update = false) {
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
-        if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) return;
-        if (get_post_status($post_id) !== 'publish') return;
-        // 每日任务本身长期存在，不能用它判断“是否已经排过一次即时同步”。
-        if (!wp_next_scheduled('lisun_sync_all_product_videos_once_event')) {
-            wp_schedule_single_event(time() + 5, 'lisun_sync_all_product_videos_once_event');
-        }
-    }
-
-    /** 每日自动校准一次，覆盖批量导入或直接修改数据库等场景。 */
-    public static function ensure_product_video_cron() {
-        $initial_sync_needed = !get_option('lisun_manual_product_video_initial_sync_queued');
-        if ($initial_sync_needed) {
-            update_option('lisun_manual_product_video_initial_sync_queued', current_time('mysql'), false);
-            // 先排一次历史数据回填，再建立每日任务；不能用同一个 next_scheduled 判断替代两者。
-            if (!wp_next_scheduled('lisun_sync_all_product_videos_once_event')) {
-                wp_schedule_single_event(time() + 10, 'lisun_sync_all_product_videos_once_event');
-            }
-        }
-        $scheduled = function_exists('wp_get_scheduled_event')
-            ? wp_get_scheduled_event('lisun_sync_all_product_videos_event')
-            : null;
-        if (!$scheduled || empty($scheduled->schedule) || $scheduled->schedule !== 'daily') {
-            wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'lisun_sync_all_product_videos_event');
-        }
-    }
-
-    public static function sync_manual_videos_after_save($post_id, $post = null, $update = false) {
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
-        if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) return;
-        if (!empty($_POST['lisun_sync_product_videos_now'])) {
-            Lisun_Manual_Product_Video_Compat::clear_cache();
-        }
-        self::sync_videos_from_product($post_id);
-    }
-
-    /** 定时任务：同步全部说明书，前台不再承担实时搜索和写入。 */
-    public static function sync_all_product_videos() {
-        $ids = get_posts([
-            'post_type' => 'manual',
-            'post_status' => ['publish', 'draft', 'private'],
-            'posts_per_page' => -1,
-            'fields' => 'ids',
-            'no_found_rows' => true,
-        ]);
-        foreach ((array) $ids as $post_id) {
-            self::sync_videos_from_product((int) $post_id);
-        }
-    }
-
-    public static function sync_product_videos_for_manual($post_id) {
-        self::sync_videos_from_product((int) $post_id);
     }
 
     /**
@@ -1014,12 +944,6 @@ class Lisun_Manual_Import {
     public static function ajax_do_import_async() {
         self::check_nonce();
 
-        $replace_id = absint($_POST['replace_post_id'] ?? 0);
-        $replace_hash = sanitize_text_field(wp_unslash($_POST['replace_hash'] ?? ''));
-        if ($replace_id && !self::valid_replace_target($replace_id, $replace_hash)) {
-            wp_send_json_error(['message' => '替换目标无效、无权限或正文已变化，请重新核对。']);
-        }
-
         $stored_name = sanitize_text_field($_POST['stored_name'] ?? '');
         $post_title  = sanitize_text_field($_POST['post_title'] ?? '');
         if (empty($stored_name)) {
@@ -1088,15 +1012,8 @@ class Lisun_Manual_Import {
                 $post_title = pathinfo($original_name, PATHINFO_FILENAME);
             }
 
-            // [修改时间：2026-11-05 11:49:15 +08:00] 替换只写旧 ID 的正文，保留 slug、标题和远程绑定。
-            if ($replace_id) {
-                if (!self::valid_replace_target($replace_id, $replace_hash)) {
-                    throw new \Exception('目标文章在解析期间已变化，请重新核对后再导入。');
-                }
-                self::save_replace_snapshot($replace_id);
-                $post_id = wp_update_post(['ID' => $replace_id, 'post_content' => $post_content], true);
-            } else {
-                $post_id = wp_insert_post([
+            // 3. 创建 manual 文章
+            $post_id = wp_insert_post([
                 'post_title'   => $post_title,
                 'post_content' => $post_content,
                 'post_status'  => 'draft',
@@ -1106,23 +1023,15 @@ class Lisun_Manual_Import {
                     '_lisun_manual_lang'        => 'zh',
                     '_lisun_manual_sync_status' => 'pending',
                 ],
-                ], true);
-            }
+            ], true);
             if (is_wp_error($post_id)) {
                 throw new \Exception($post_id->get_error_message());
             }
 
-            if ($replace_id) update_post_meta($post_id, '_lisun_manual_replace_after_hash', hash('sha256', get_post_field('post_content', $post_id)));
-
             // 保存原始 .docx 路径（用于后续翻译管线）
-            self::save_docx_backup($post_id, $filepath, (bool) $replace_id);
-
-            if ($replace_id) {
-                $post_title = get_the_title($post_id);
-            }
+            self::save_docx_backup($post_id, $filepath);
 
             // 4. 自动标签
-            if (!$replace_id) {
             $model_hint = self::extract_model_from_filename($parsed['original_filename'] ?? $original_name);
             self::auto_tag_post($post_id, $model_hint);
             if (!empty($model_hint)) {
@@ -1134,14 +1043,12 @@ class Lisun_Manual_Import {
 
             // 5.5. 自动生成 SEO 三要素
             self::generate_seo_for_post($post_id);
-            }
 
             // 5. 中文导入完成 → 立即通知前端（翻译在后台并行，不阻塞）
             set_transient("lisun_import_{$job_id}", [
                 'status'       => 'imported',
                 'post_id'      => $post_id,
                 'post_title'   => $post_title,
-                'replaced'     => (bool) $replace_id,
                 'post_url'     => get_edit_post_link($post_id, 'raw'),
                 'translating'  => Lisun_Manual_Translate::is_configured(),
                 'finished_at'  => current_time('mysql'),
@@ -1636,143 +1543,15 @@ class Lisun_Manual_Import {
      * @param int    $post_id  中文 post ID
      * @param string $filepath 原始 .docx 文件路径
      */
-    // [修改时间：2026-11-05 11:49:15 +08:00] 覆盖导入只接受中文说明书，且核对后不能悄悄替换变化过的正文。
-    private static function valid_replace_target($post_id, $hash = '') {
-        $post = get_post($post_id);
-        return $post && $post->post_type === 'manual'
-            && get_post_meta($post_id, '_lisun_manual_lang', true) === 'zh'
-            && current_user_can('edit_post', $post_id)
-            && $hash !== '' && hash_equals(hash('sha256', $post->post_content), $hash);
-    }
-
-    // [修改时间：2026-11-05 13:04:00 +08:00] 仅搜索有权限编辑的中文说明书标题或产品型号，供逐文件指定替换目标。
-    public static function ajax_search_replace_targets() {
-        self::check_nonce();
-        $keyword = sanitize_text_field(wp_unslash($_POST['keyword'] ?? ''));
-        if (mb_strlen($keyword) < 2 || mb_strlen($keyword) > 80) {
-            wp_send_json_error(['message' => '请输入至少 2 个字的产品型号或标题关键词。']);
-        }
-        global $wpdb;
-        $like = '%' . $wpdb->esc_like($keyword) . '%';
-        $ids = $wpdb->get_col($wpdb->prepare(
-            "SELECT p.ID FROM {$wpdb->posts} p
-             WHERE p.post_type = 'manual' AND p.post_status NOT IN ('trash', 'auto-draft')
-             AND EXISTS (SELECT 1 FROM {$wpdb->postmeta} lang WHERE lang.post_id = p.ID AND lang.meta_key = '_lisun_manual_lang' AND lang.meta_value = 'zh')
-             AND (p.post_title LIKE %s OR EXISTS (SELECT 1 FROM {$wpdb->postmeta} model WHERE model.post_id = p.ID AND model.meta_key = 'product-no' AND model.meta_value LIKE %s) OR p.ID = %d)
-             ORDER BY p.post_modified DESC LIMIT 30",
-            $like, $like, ctype_digit($keyword) ? (int) $keyword : 0
-        ));
-        $matches = [];
-        foreach ($ids as $id) {
-            if (!current_user_can('edit_post', (int) $id)) continue;
-            $post = get_post($id);
-            $matches[] = [
-                'id' => (int) $id,
-                'title' => get_the_title($id),
-                'model' => get_post_meta($id, 'product-no', true),
-                'url' => get_permalink($id),
-                'remote_id' => get_post_meta($id, '_lisun_manual_remote_id', true),
-                'hash' => hash('sha256', $post->post_content),
-            ];
-        }
-        wp_send_json_success(['matches' => $matches]);
-    }
-
-    public static function ajax_replace_target() {
-        self::check_nonce();
-        $post_id = absint($_POST['post_id'] ?? 0);
-        $post = get_post($post_id);
-        if (!$post || $post->post_type !== 'manual' || get_post_meta($post_id, '_lisun_manual_lang', true) !== 'zh' || !current_user_can('edit_post', $post_id)) {
-            wp_send_json_error(['message' => '只能替换有权编辑的中文说明书。']);
-        }
-        wp_send_json_success([
-            'id' => $post_id,
-            'title' => get_the_title($post_id),
-            'url' => get_permalink($post_id),
-            'remote_id' => get_post_meta($post_id, '_lisun_manual_remote_id', true),
-            'hash' => hash('sha256', $post->post_content),
-        ]);
-    }
-
-    // [修改时间：2026-11-05 11:49:15 +08:00] 每次覆盖前记录正文和原 DOCX 副本，旧文章标识不参与恢复。
-    private static function save_replace_snapshot($post_id) {
-        $post = get_post($post_id);
-        $history = get_post_meta($post_id, '_lisun_manual_replace_history', true);
-        $history = is_array($history) ? $history : [];
-        $docx = get_post_meta($post_id, '_lisun_manual_docx_path', true);
-        $copy = '';
-        if ($docx && !is_file($docx)) throw new \Exception('原 DOCX 路径无效，无法保证撤回；未替换正文。');
-        if ($docx && is_file($docx)) {
-            $dir = LISUN_MANUAL_PATH . 'backups/replacements/';
-            if (!wp_mkdir_p($dir)) throw new \Exception('无法建立 DOCX 撤回备份目录。');
-            $copy = $dir . 'zh_' . $post_id . '_' . wp_generate_uuid4() . '.' . strtolower(pathinfo($docx, PATHINFO_EXTENSION));
-            if (!copy($docx, $copy)) throw new \Exception('原 DOCX 备份失败，未替换正文。');
-        }
-        $history[] = [
-            'content' => $post->post_content,
-            'docx_copy' => $copy,
-            'docx_path' => $docx,
-            'at' => current_time('mysql'),
-            'user' => get_current_user_id(),
-        ];
-        update_post_meta($post_id, '_lisun_manual_replace_history', $history);
-    }
-
-    public static function register_replace_undo_box() {
-        add_meta_box('lisun-replace-undo', '覆盖导入记录', [__CLASS__, 'render_replace_undo_box'], 'manual', 'side');
-    }
-
-    public static function render_replace_undo_box($post) {
-        $history = get_post_meta($post->ID, '_lisun_manual_replace_history', true);
-        if (empty($history) || !is_array($history)) { echo '<p>暂无覆盖导入记录。</p>'; return; }
-        $last = end($history);
-        echo '<p>上次覆盖：' . esc_html($last['at']) . '；操作者 ID：' . esc_html($last['user']) . '</p>';
-        echo '<p>撤回会恢复上次覆盖前的中文正文和原 DOCX；若英文已推送，需重新翻译推送。文章链接和绑定保持不变。</p>';
-        echo '<button type="button" class="button" id="lisun-undo-replace">撤回上次覆盖导入</button><span id="lisun-undo-result"></span>';
-        $nonce = wp_create_nonce('lisun_undo_replace_' . $post->ID);
-        echo '<script>jQuery(function($){$("#lisun-undo-replace").on("click",function(){if(!confirm("确认恢复上次覆盖前的正文和 DOCX？英文站如已推送需要重新翻译。"))return;var b=$(this).prop("disabled",true);$.post(ajaxurl,{action:"lisun_undo_replace_import",post_id:' . (int)$post->ID . ',nonce:' . wp_json_encode($nonce) . '},function(r){if(r.success){location.reload();}else{alert(r.data.message||"撤回失败");b.prop("disabled",false);}}).fail(function(){alert("请求失败");b.prop("disabled",false);});});});</script>';
-    }
-
-    public static function ajax_undo_replace_import() {
-        $post_id = absint($_POST['post_id'] ?? 0);
-        check_ajax_referer('lisun_undo_replace_' . $post_id, 'nonce');
-        if (!current_user_can('edit_post', $post_id) || get_post_type($post_id) !== 'manual') wp_send_json_error(['message' => '无权限']);
-        $history = get_post_meta($post_id, '_lisun_manual_replace_history', true);
-        if (!is_array($history) || !$history) wp_send_json_error(['message' => '没有可撤回的快照']);
-        $last = end($history);
-        $current = get_post($post_id);
-        $after = get_post_meta($post_id, '_lisun_manual_replace_after_hash', true);
-        if (!$after || !hash_equals($after, hash('sha256', $current->post_content))) wp_send_json_error(['message' => '正文后来又被编辑过；请先检查修订记录，避免覆盖新改动。']);
-        if (!empty($last['docx_copy']) && !is_file($last['docx_copy'])) wp_send_json_error(['message' => '原 DOCX 备份不存在，撤回已停止。']);
-        if (!empty($last['docx_copy']) && !copy($last['docx_copy'], $last['docx_path'])) wp_send_json_error(['message' => '原 DOCX 恢复失败，正文未改动。']);
-        $updated = wp_update_post(['ID' => $post_id, 'post_content' => $last['content']], true);
-        if (is_wp_error($updated)) wp_send_json_error(['message' => $updated->get_error_message()]);
-        if (!empty($last['docx_path'])) update_post_meta($post_id, '_lisun_manual_docx_path', $last['docx_path']);
-        else delete_post_meta($post_id, '_lisun_manual_docx_path');
-        array_pop($history);
-        update_post_meta($post_id, '_lisun_manual_replace_history', $history);
-        delete_post_meta($post_id, '_lisun_manual_replace_after_hash');
-        wp_send_json_success(['post_id' => $post_id]);
-    }
-
-    private static function save_docx_backup($post_id, $filepath, $required = false) {
-        if (!file_exists($filepath)) {
-            if ($required) throw new \Exception('上传的 DOCX 已丢失。');
-            return;
-        }
+    private static function save_docx_backup($post_id, $filepath) {
+        if (!file_exists($filepath)) return;
 
         $backup_dir = LISUN_MANUAL_PATH . 'backups/';
-        if (!wp_mkdir_p($backup_dir)) {
-            if ($required) throw new \Exception('无法保存新 DOCX，正文已更新，可从覆盖记录撤回。');
-            return;
-        }
+        if (!wp_mkdir_p($backup_dir)) return;
 
         $ext = strtolower(pathinfo($filepath, PATHINFO_EXTENSION));
         $dest = $backup_dir . 'zh_' . $post_id . '.' . $ext;
-        if (!@copy($filepath, $dest)) {
-            if ($required) throw new \Exception('新 DOCX 备份失败，正文已更新，可从覆盖记录撤回。');
-            return;
-        }
+        @copy($filepath, $dest);
         update_post_meta($post_id, '_lisun_manual_docx_path', $dest);
     }
 
@@ -1853,80 +1632,27 @@ class Lisun_Manual_Import {
     }
 
     /**
-     * 根据 product-no 同步操作视频到说明书后台。
-     * 产品来源视频可自动更新；手动视频和人工覆盖的视频不被覆盖。
+     * 根据 product-no 从 products CPT 同步操作视频到 _lisun_manual_videos
+     *
+     * 视频数据来自 products 帖子的 ACF repeater 字段 product-video，
+     * 通过 lisun_get_product_videos_by_model() 查找匹配。
+     * 已有手动视频则不覆盖。
      */
     private static function sync_videos_from_product($post_id) {
         $product_no = get_post_meta($post_id, 'product-no', true);
-        // product-no 允许保存多个型号，例如：
-        // LPCE-2(LMS-9000C), LPCE-2(LMS-9000)
-        // 必须逐个型号查询；把整串交给产品表精确匹配会永远返回空。
-        $product_models = preg_split('/[,，;；\r\n]+/u', (string) $product_no, -1, PREG_SPLIT_NO_EMPTY);
-        $product_models = array_values(array_unique(array_filter(array_map('trim', (array) $product_models))));
-        $videos = [];
-        foreach ($product_models as $product_model) {
-            foreach ((array) Lisun_Manual_Product_Video_Compat::get_by_model($product_model) as $product_video) {
-                if (!is_array($product_video)) continue;
-                $product_video['source_model'] = $product_model;
-                $videos[] = $product_video;
-            }
-        }
-        $existing = json_decode((string) get_post_meta($post_id, '_lisun_manual_videos', true), true);
-        $existing = is_array($existing) ? $existing : [];
-        $suppressed = json_decode((string) get_post_meta($post_id, '_lisun_manual_video_suppressions', true), true);
-        $suppressed = is_array($suppressed) ? $suppressed : [];
+        if (empty($product_no)) return;
 
-        // 没有 source 的旧记录按人工记录处理，避免自动同步误删历史人工内容。
-        $manual = [];
-        $manual_override_urls = [];
-        foreach ($existing as $item) {
-            if (!is_array($item) || empty($item['url'])) continue;
-            if (($item['source'] ?? '') === 'product') continue;
-            $item['source'] = in_array(($item['source'] ?? ''), ['manual_override', 'manual'], true)
-                ? $item['source']
-                : 'manual';
-            if ($item['source'] === 'manual_override' && !empty($item['original_url'])) {
-                $manual_override_urls[(string) $item['original_url']] = true;
-            }
-            $manual[] = $item;
-        }
+        // 已有人工设置的视频则跳过
+        $existing = get_post_meta($post_id, '_lisun_manual_videos', true);
+        if (!empty($existing) && $existing !== '[]') return;
 
-        $auto = [];
-        foreach ((array) $videos as $video) {
-            if (empty($video['url'])) continue;
-            $url = esc_url_raw($video['url']);
-            $original_url = (string) ($video['url'] ?? $url);
-            // 删除或人工覆盖的产品行由后台记录保护，不被自动任务悄悄恢复/重复添加。
-            if (isset($suppressed[$original_url]) || isset($suppressed[$url])) continue;
-            if (isset($manual_override_urls[$original_url]) || isset($manual_override_urls[$url])) continue;
-            $auto[] = [
-                'name' => (string) ($video['name'] ?? 'Operation Video'),
-                'url' => $url,
-                'video_type' => 'operation',
-                'source' => 'product',
-                'source_model' => (string) ($video['source_model'] ?? $product_no),
-                'original_url' => $original_url,
-                'original_name' => (string) ($video['name'] ?? 'Operation Video'),
-            ];
-        }
+        $videos = Lisun_Manual_Product_Video_Compat::get_by_model($product_no);
+        if (empty($videos)) return;
 
-        // 最终按 URL 去重，人工覆盖优先于产品自动记录。
-        $next = [];
-        $seen = [];
-        foreach (array_merge($manual, $auto) as $item) {
-            $key = preg_replace('#^https?:#', '', (string) ($item['url'] ?? ''));
-            if ($key === '' || isset($seen[$key])) continue;
-            $seen[$key] = true;
-            $next[] = $item;
-        }
-        $old_json = wp_json_encode($existing, JSON_UNESCAPED_UNICODE);
-        $new_json = wp_json_encode($next, JSON_UNESCAPED_UNICODE);
-        if ($old_json !== $new_json || !metadata_exists('post', $post_id, '_lisun_manual_videos')) {
-            update_post_meta($post_id, '_lisun_manual_videos', $new_json);
-        }
-        update_post_meta($post_id, '_lisun_manual_videos_synced_at', current_time('mysql'));
+        update_post_meta($post_id, '_lisun_manual_videos',
+            wp_json_encode($videos, JSON_UNESCAPED_UNICODE));
 
-        error_log("LISUN Manual: synced " . count($auto) . " product operation video(s) for post {$post_id} (model: {$product_no})");
+        error_log("LISUN Manual: synced " . count($videos) . " video(s) from product CPT for post {$post_id} (model: {$product_no})");
     }
 
     /**

@@ -12,9 +12,6 @@ class Lisun_Manual_Glossary {
 
     use Lisun_Manual_Nonce_Trait;
 
-    /** Deleted terms remain recoverable for 30 days. */
-    private const TRASH_RETENTION_DAYS = 30;
-
     // 术语类别（稳定 slug，UI 层映射中文；不再复用 note 字段）。
     const CATEGORY_MANUAL = 'manual';
     const CATEGORY_ERP    = 'erp';
@@ -113,27 +110,13 @@ class Lisun_Manual_Glossary {
     }
 
     private static function normalize_category($category) {
-        $category = trim((string) $category);
-        // Remote/CSV sources often carry the human label rather than the
-        // internal slug. Treat it as an explicit value, not as "missing".
-        $label_category = self::category_from_label($category);
-        if ($label_category !== '') $category = $label_category;
+        $category = (string) $category;
         return in_array($category, [self::CATEGORY_MANUAL, self::CATEGORY_ERP, self::CATEGORY_CUSTOM], true)
             ? $category : '';
     }
 
     private static function normalize_scope($scope) {
-        $scope = trim((string) $scope);
-        $labels = [
-            '全局' => self::SCOPE_GLOBAL,
-            '全局使用' => self::SCOPE_GLOBAL,
-            'global use' => self::SCOPE_GLOBAL,
-            '指定文章' => self::SCOPE_ARTICLE,
-            '文章' => self::SCOPE_ARTICLE,
-            'article specific' => self::SCOPE_ARTICLE,
-        ];
-        $lookup = function_exists('mb_strtolower') ? mb_strtolower($scope, 'UTF-8') : strtolower($scope);
-        if (isset($labels[$lookup])) $scope = $labels[$lookup];
+        $scope = (string) $scope;
         return in_array($scope, [self::SCOPE_GLOBAL, self::SCOPE_ARTICLE], true) ? $scope : '';
     }
 
@@ -158,9 +141,6 @@ class Lisun_Manual_Glossary {
         add_action('wp_ajax_lisun_add_glossary', [__CLASS__, 'ajax_add']);
         add_action('wp_ajax_lisun_save_glossary', [__CLASS__, 'ajax_save']);
         add_action('wp_ajax_lisun_delete_glossary', [__CLASS__, 'ajax_delete']);
-        add_action('wp_ajax_lisun_get_glossary_trash', [__CLASS__, 'ajax_get_trash']);
-        add_action('wp_ajax_lisun_restore_glossary', [__CLASS__, 'ajax_restore']);
-        add_action('wp_ajax_lisun_permanently_delete_glossary', [__CLASS__, 'ajax_permanently_delete']);
         add_action('wp_ajax_lisun_import_glossary_csv', [__CLASS__, 'ajax_import_csv']);
         add_action('wp_ajax_lisun_export_glossary', [__CLASS__, 'ajax_export']);
         add_action('wp_ajax_lisun_search_glossary', [__CLASS__, 'ajax_search']);
@@ -171,13 +151,9 @@ class Lisun_Manual_Glossary {
         add_action('wp_ajax_lisun_check_deepl_connection', [__CLASS__, 'ajax_check_deepl_connection']);
         add_action('wp_ajax_lisun_retry_glossary_sync', [__CLASS__, 'ajax_retry_glossary_sync']);
         add_action('wp_ajax_lisun_get_glossary_page', [__CLASS__, 'ajax_get_page']);
-        add_action('init', [__CLASS__, 'purge_expired_trash']);
         add_action('wp_ajax_lisun_post_term_config', [__CLASS__, 'ajax_post_term_config']);
         add_action('wp_ajax_lisun_save_post_term_config', [__CLASS__, 'ajax_save_post_term_config']);
         add_action('wp_ajax_lisun_set_post_term_override', [__CLASS__, 'ajax_set_post_term_override']);
-
-        // [修改时间：2026-11-04 15:21:05 +08:00] 文章编辑页“本篇术语”侧边栏；设置项只控制显示，不影响翻译筛选逻辑。
-        add_action('add_meta_boxes', [__CLASS__, 'add_post_term_metabox']);
 
         // REST API 端点：供本地脚本推送术语库 + 双站共享
         add_action('rest_api_init', function () {
@@ -196,99 +172,6 @@ class Lisun_Manual_Glossary {
                 },
             ]);
         });
-    }
-
-    /** 在中文 manual 编辑页显示本篇术语配置。 */
-    public static function add_post_term_metabox() {
-        if (!get_option('lisun_show_post_term_panel', true)) return;
-        add_meta_box(
-            'lisun-manual-post-terms',
-            __('本篇术语', 'lisun-manual'),
-            [__CLASS__, 'render_post_term_metabox'],
-            'manual',
-            'side',
-            'high'
-        );
-    }
-
-    /** 渲染术语选择，并把选择分别写入默认配置或本次翻译临时覆盖。 */
-    public static function render_post_term_metabox($post) {
-        if (get_post_meta($post->ID, '_lisun_manual_lang', true) === 'en') {
-            echo '<p style="color:#777;">' . esc_html__('术语配置请在中文原文中调整。', 'lisun-manual') . '</p>';
-            return;
-        }
-        $terms = self::post_term_config($post->ID);
-        // [修改时间：2026-11-04 15:23:01 +08:00] ERP 来源术语默认收起，避免详情页被大量 ERP 词条占满。
-        $erp_terms = [];
-        $normal_terms = [];
-        foreach ($terms as $term) {
-            if (($term['category'] ?? '') === self::CATEGORY_ERP) $erp_terms[] = $term;
-            else $normal_terms[] = $term;
-        }
-        // [修改时间：2026-11-04 15:26:18 +08:00] 未折叠术语按“本篇已用”优先，再按导入时间倒序。
-        usort($normal_terms, static function ($a, $b) {
-            $enabled_compare = ((int) !empty($b['enabled'])) <=> ((int) !empty($a['enabled']));
-            if ($enabled_compare !== 0) return $enabled_compare;
-            $date_compare = strtotime((string) ($b['import_date'] ?? '')) <=> strtotime((string) ($a['import_date'] ?? ''));
-            if ($date_compare !== 0) return $date_compare;
-            return strnatcasecmp((string) ($a['en'] ?? ''), (string) ($b['en'] ?? ''));
-        });
-        wp_nonce_field('lisun_manual_post_terms', 'lisun_post_terms_nonce');
-        ?>
-        <div id="lisun-post-terms" data-post-id="<?php echo (int) $post->ID; ?>">
-            <p style="margin:0 0 8px;color:#666;font-size:12px;line-height:1.45;">勾选后可保存为本篇默认术语，或只应用于下一次翻译。</p>
-            <input type="search" class="widefat" id="lisun-post-terms-search" placeholder="搜索中文或英文术语…" style="margin-bottom:8px;">
-            <div id="lisun-post-terms-list" style="max-height:300px;overflow:auto;border:1px solid #dcdcde;background:#fff;padding:4px 6px;">
-                <?php foreach ($normal_terms as $term): ?>
-                    <label class="lisun-post-term-row" data-search="<?php echo esc_attr(strtolower($term['zh'] . ' ' . $term['en'])); ?>" style="display:block;padding:4px 0;font-size:12px;line-height:1.3;">
-                        <input type="checkbox" value="<?php echo esc_attr($term['term_id']); ?>" <?php checked($term['enabled']); ?>>
-                        <span><?php echo esc_html($term['zh']); ?> → <?php echo esc_html($term['en']); ?></span>
-                    </label>
-                <?php endforeach; ?>
-                <?php if ($erp_terms): ?>
-                    <details class="lisun-post-terms-erp" style="margin-top:6px;border-top:1px solid #dcdcde;padding-top:5px;">
-                        <summary style="cursor:pointer;font-weight:600;padding:3px 0;">ERP 术语（<?php echo count($erp_terms); ?>）</summary>
-                        <div>
-                            <?php foreach ($erp_terms as $term): ?>
-                                <label class="lisun-post-term-row" data-search="<?php echo esc_attr(strtolower($term['zh'] . ' ' . $term['en'])); ?>" style="display:block;padding:4px 0;font-size:12px;line-height:1.3;">
-                                    <input type="checkbox" value="<?php echo esc_attr($term['term_id']); ?>" <?php checked($term['enabled']); ?>>
-                                    <span><?php echo esc_html($term['zh']); ?> → <?php echo esc_html($term['en']); ?></span>
-                                </label>
-                            <?php endforeach; ?>
-                        </div>
-                    </details>
-                <?php endif; ?>
-            </div>
-            <p style="margin:8px 0 4px;display:flex;gap:4px;flex-wrap:wrap;">
-                <button type="button" class="button button-small" id="lisun-post-terms-save">保存为本篇默认</button>
-                <button type="button" class="button button-primary button-small" id="lisun-post-terms-once">仅本次翻译使用</button>
-            </p>
-            <p id="lisun-post-terms-status" style="margin:4px 0 0;font-size:12px;color:#2271b1;"></p>
-        </div>
-        <script>
-        jQuery(function($) {
-            var box = $('#lisun-post-terms'); if (!box.length) return;
-            var nonce = $('#lisun_post_terms_nonce').val();
-            function ids() { var out=[]; box.find('input[type=checkbox]:checked').each(function(){out.push($(this).val());}); return out; }
-            function request(action, success) {
-                var data = {_nonce: nonce, action: action, post_id: box.data('post-id'), enabled_ids: ids()};
-                var status = $('#lisun-post-terms-status').text('保存中…');
-                $.post(ajaxurl, data).done(function(resp) {
-                    if (resp && resp.success) { status.text(resp.data.message || '已保存'); }
-                    else { status.css('color','#d63638').text((resp && resp.data && resp.data.message) || '保存失败'); }
-                    if (success) success(resp);
-                }).fail(function(){ status.css('color','#d63638').text('请求失败，请刷新后重试'); });
-            }
-            $('#lisun-post-terms-save').on('click', function(){ request('lisun_save_post_term_config'); });
-            $('#lisun-post-terms-once').on('click', function(){ request('lisun_set_post_term_override'); });
-            $('#lisun-post-terms-search').on('input', function(){
-                var q = String($(this).val() || '').toLowerCase();
-                box.find('.lisun-post-term-row').each(function(){ $(this).toggle(!q || String($(this).data('search')).indexOf(q) >= 0); });
-                if (q && box.find('.lisun-post-terms-erp .lisun-post-term-row:visible').length) box.find('.lisun-post-terms-erp').prop('open', true);
-            });
-        });
-        </script>
-        <?php
     }
 
     /**
@@ -378,61 +261,6 @@ class Lisun_Manual_Glossary {
         return $normalized;
     }
 
-    /** Return valid, non-expired trash rows. Trashed terms never participate in translation. */
-    public static function get_trash() {
-        $data = get_option('lisun_glossary_trash', []);
-        if (!is_array($data)) {
-            $decoded = json_decode((string) $data, true);
-            $data = is_array($decoded) ? $decoded : [];
-        }
-        $now = function_exists('current_time') ? current_time('timestamp') : time();
-        $retention = self::TRASH_RETENTION_DAYS * (defined('DAY_IN_SECONDS') ? DAY_IN_SECONDS : 86400);
-        $changed = false;
-        $trash = [];
-        foreach ($data as $item) {
-            if (!is_array($item)) { $changed = true; continue; }
-            $term_id = self::normalize_term_id($item['term_id'] ?? '');
-            $zh = sanitize_text_field($item['zh'] ?? '');
-            $en = sanitize_text_field($item['en'] ?? '');
-            if ($term_id === '' || $zh === '' || $en === '') { $changed = true; continue; }
-            $deleted_at = max(0, (int) ($item['deleted_at'] ?? 0));
-            if ($deleted_at > 0 && $deleted_at <= $now - $retention) { $changed = true; continue; }
-            $normalized = [
-                'term_id' => $term_id,
-                'zh' => $zh,
-                'en' => $en,
-                'note' => sanitize_textarea_field($item['note'] ?? ''),
-                'category' => self::normalize_category($item['category'] ?? '') ?: self::CATEGORY_MANUAL,
-                'scope' => self::normalize_scope($item['scope'] ?? '') ?: self::SCOPE_ARTICLE,
-                'import_date' => self::normalize_import_date($item['import_date'] ?? '', self::legacy_import_date()),
-                'deleted_at' => $deleted_at > 0 ? $deleted_at : $now,
-            ];
-            if ($normalized !== $item) $changed = true;
-            $trash[] = $normalized;
-        }
-        if ($changed || !is_array(get_option('lisun_glossary_trash', []))) self::save_trash($trash);
-        return $trash;
-    }
-
-    public static function purge_expired_trash() {
-        self::get_trash();
-    }
-
-    private static function save_trash($trash) {
-        update_option('lisun_glossary_trash', is_array($trash) ? array_values($trash) : [], false);
-    }
-
-    private static function move_to_trash($item) {
-        $trash = self::get_trash();
-        $term_id = (string) ($item['term_id'] ?? '');
-        $trash = array_values(array_filter($trash, function ($row) use ($term_id) {
-            return (string) ($row['term_id'] ?? '') !== $term_id;
-        }));
-        $item['deleted_at'] = function_exists('current_time') ? current_time('timestamp') : time();
-        $trash[] = $item;
-        self::save_trash($trash);
-    }
-
     /**
      * 保存术语库（确保存入的是数组）
      */
@@ -451,7 +279,6 @@ class Lisun_Manual_Glossary {
         }
         $existing_by_zh = [];
         $existing_dates_by_zh = [];
-        $existing_meta_by_zh = [];
         foreach ($raw_existing as $item) {
             if (!is_array($item)) continue;
             $zh = sanitize_text_field($item['zh'] ?? '');
@@ -459,31 +286,8 @@ class Lisun_Manual_Glossary {
             if ($zh !== '' && $id !== '') {
                 $existing_by_zh[$zh] = $id;
                 $existing_dates_by_zh[$zh] = self::normalize_import_date($item['import_date'] ?? '', self::legacy_import_date());
-                $existing_meta_by_zh[$zh] = [
-                    'category' => self::normalize_category($item['category'] ?? ''),
-                    'scope' => self::normalize_scope($item['scope'] ?? ''),
-                ];
             }
         }
-
-        // An old remote site or sheet may omit category/scope entirely. In
-        // that case retain the user's previously saved local choice instead
-        // of recalculating it from the category default. Explicit incoming
-        // values (including Chinese labels) still take precedence.
-        foreach ($glossary as &$incoming_item) {
-            if (!is_array($incoming_item)) continue;
-            $zh = sanitize_text_field($incoming_item['zh'] ?? '');
-            $existing_meta = $existing_meta_by_zh[$zh] ?? [];
-            if (self::normalize_category($incoming_item['category'] ?? '') === ''
-                && !empty($existing_meta['category'])) {
-                $incoming_item['category'] = $existing_meta['category'];
-            }
-            if (self::normalize_scope($incoming_item['scope'] ?? '') === ''
-                && !empty($existing_meta['scope'])) {
-                $incoming_item['scope'] = $existing_meta['scope'];
-            }
-        }
-        unset($incoming_item);
 
         self::persist_entries(
             self::normalize_entries($glossary, $existing_by_zh, self::current_import_date(), $existing_dates_by_zh),
@@ -1123,84 +927,17 @@ class Lisun_Manual_Glossary {
     public static function ajax_delete() {
         self::check_nonce();
 
-        $term_id = sanitize_text_field(wp_unslash($_POST['term_id'] ?? ''));
+        $index = intval($_POST['index'] ?? -1);
         $glossary = self::get_all();
-        $index = -1;
-        foreach ($glossary as $stored_index => $item) {
-            if ((string) ($item['term_id'] ?? '') === $term_id) {
-                $index = (int) $stored_index;
-                break;
-            }
-        }
-        if ($index < 0 || !isset($glossary[$index])) {
+
+        if (!isset($glossary[$index])) {
             wp_send_json_error(['message' => __('术语不存在', 'lisun-manual')]);
         }
 
-        $deleted = $glossary[$index];
         array_splice($glossary, $index, 1);
         self::save_all($glossary);
-        self::move_to_trash($deleted);
 
-        wp_send_json_success([
-            'total' => count($glossary),
-            'term_id' => $term_id,
-            'message' => '术语已移入回收站，可在 30 天内恢复。',
-        ]);
-    }
-
-    public static function ajax_get_trash() {
-        self::check_nonce();
-        $items = self::get_trash();
-        usort($items, function ($a, $b) {
-            return (int) ($b['deleted_at'] ?? 0) <=> (int) ($a['deleted_at'] ?? 0);
-        });
-        $now = function_exists('current_time') ? current_time('timestamp') : time();
-        $retention = self::TRASH_RETENTION_DAYS * (defined('DAY_IN_SECONDS') ? DAY_IN_SECONDS : 86400);
-        foreach ($items as &$item) {
-            $deleted_at = (int) ($item['deleted_at'] ?? $now);
-            $item['deleted_at_text'] = function_exists('wp_date') ? wp_date('Y-m-d H:i:s', $deleted_at) : date('Y-m-d H:i:s', $deleted_at);
-            $item['expires_at'] = $deleted_at + $retention;
-            $item['expires_at_text'] = function_exists('wp_date') ? wp_date('Y-m-d', $item['expires_at']) : date('Y-m-d', $item['expires_at']);
-        }
-        unset($item);
-        wp_send_json_success(['items' => $items, 'total' => count($items), 'retention_days' => self::TRASH_RETENTION_DAYS]);
-    }
-
-    public static function ajax_restore() {
-        self::check_nonce();
-        $term_id = sanitize_text_field(wp_unslash($_POST['term_id'] ?? ''));
-        $trash = self::get_trash();
-        $trash_index = -1;
-        foreach ($trash as $index => $item) {
-            if ((string) ($item['term_id'] ?? '') === $term_id) { $trash_index = (int) $index; break; }
-        }
-        if ($trash_index < 0) wp_send_json_error(['message' => '回收站中找不到该术语，可能已过期删除。']);
-        $item = $trash[$trash_index];
-        $glossary = self::get_all();
-        foreach ($glossary as $active) {
-            if ((string) ($active['term_id'] ?? '') === $term_id) wp_send_json_error(['message' => '该术语已经存在于当前术语库中。']);
-            if ((string) ($active['zh'] ?? '') === (string) ($item['zh'] ?? '')) wp_send_json_error(['message' => '当前术语库已存在相同中文术语，请先处理冲突后再恢复。']);
-        }
-        unset($item['deleted_at']);
-        $glossary[] = $item;
-        self::save_all($glossary);
-        array_splice($trash, $trash_index, 1);
-        self::save_trash($trash);
-        wp_send_json_success(['term_id' => $term_id, 'total' => count($glossary), 'message' => '术语已恢复。']);
-    }
-
-    public static function ajax_permanently_delete() {
-        self::check_nonce();
-        $term_id = sanitize_text_field(wp_unslash($_POST['term_id'] ?? ''));
-        $trash = self::get_trash();
-        $before = count($trash);
-        $trash = array_values(array_filter($trash, function ($item) use ($term_id) {
-            return (string) ($item['term_id'] ?? '') !== $term_id;
-        }));
-        if (count($trash) === $before) wp_send_json_error(['message' => '回收站中找不到该术语。']);
-        self::save_trash($trash);
-
-        wp_send_json_success(['term_id' => $term_id, 'total' => count($trash)]);
+        wp_send_json_success(['total' => count($glossary)]);
     }
 
     /**
