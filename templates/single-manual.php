@@ -49,11 +49,91 @@ if (!defined('ABSPATH')) {
         font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
     }
 
+    /* 2026-11-09 副标题行 + PDF 下载按钮（屏幕端；打印由 front.css 整行隐藏） */
+    .lisun-subtitle-row {
+        position: relative;
+        margin: 0 0 12px;
+        /* 两侧等量留白：副标题继续由主题的 text-align:center 居中，
+           右侧按钮绝对定位、不挤压文本居中；留白只用于避免长标题压到按钮 */
+        padding: 0 100px;
+    }
+    .lisun-subtitle-row .lisun-manual-subtitle {
+        margin: 0;
+    }
+    .lisun-pdf-btn {
+        position: absolute;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex: none;
+        padding: 8px 14px;
+        font-size: 13px;
+        line-height: 1;
+        color: #0088cc;
+        background: #fff;
+        border: 1px solid #0088cc;
+        border-radius: 6px;
+        text-decoration: none;
+        white-space: nowrap;
+        transition: background-color .15s ease, color .15s ease;
+        font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+    }
+    .lisun-pdf-btn:hover {
+        background: #0088cc;
+        color: #fff;
+    }
+    .lisun-pdf-btn svg {
+        width: 14px;
+        height: 14px;
+        fill: currentColor;
+        flex: none;
+    }
+    /* 2026-11-09 下载状态反馈：加载中禁点、成功绿、失败红 */
+    .lisun-pdf-btn.is-loading {
+        opacity: .75;
+        pointer-events: none; /* 生成期间彻底禁点，杜绝重复触发生成 */
+    }
+    .lisun-pdf-btn svg.lisun-pdf-spin {
+        fill: none;
+        animation: lisun-pdf-rotate .9s linear infinite;
+    }
+    @keyframes lisun-pdf-rotate {
+        to { transform: rotate(360deg); }
+    }
+    .lisun-pdf-btn.is-done {
+        color: #1e9e5b;
+        border-color: #1e9e5b;
+    }
+    .lisun-pdf-btn.is-error {
+        color: #d9534f;
+        border-color: #d9534f;
+    }
+    /* 窄屏：取消两侧留白，按钮换行居中（继承 text-align，inline-flex 会居中） */
+    @media (max-width: 720px) {
+        .lisun-subtitle-row {
+            padding: 0;
+        }
+        .lisun-pdf-btn {
+            position: static;
+            transform: none;
+            margin-top: 8px;
+        }
+    }
+
     /* ========== 下载区域 ========== */
     .lisun-manual-downloads {
         margin-top: 48px;
         padding-top: 32px;
         border-top: 1px solid #e5e7eb;
+    }
+
+    /* 2026-11-09 附录：屏幕端隐藏明文地址与二维码（打印/PDF 显示，规则见 front.css @media print） */
+    .lisun-software-urls,
+    .lisun-video-qr {
+        display: none;
     }
 
     /* 主标题 —— 附录 */
@@ -70,9 +150,14 @@ if (!defined('ABSPATH')) {
     }
 
     /* 子标题 —— 罗马数字徽章 */
+    /* 2026-11-09 改为 h2 以进入 PDF 书签；显式覆盖主题对 h2 的默认装饰 */
     .lisun-dl-sub-title {
         display: flex;
         align-items: center;
+        border: 0;
+        padding: 0;
+        background: none;
+        line-height: 1.4;
         gap: 10px;
         margin: 28px 0 16px;
         font-size: 15px;
@@ -760,6 +845,16 @@ if (!defined('ABSPATH')) {
         ? $post_lang
         : (in_array($site_lang, ['zh', 'en'], true) ? $site_lang : 'zh');
     $is_en = ($interface_lang === 'en');
+
+    /* 2026-11-09 页眉标题文字（打印 / PDF 用）：按页面语言切换。
+       版式基准与字号推导见 assets/css/front.css 顶部注释。
+       英文 20.7pt 对应 5.52mm 帽高；中文按视觉等重降到 18pt（墨高约 6.27mm）。*/
+    printf(
+        '<style>@page{@top-left{content:"%s";font-size:%s;padding-top:%s}}</style>',
+        $is_en ? "User's Manual" : '操作使用说明书',
+        $is_en ? '20.7pt' : '18pt',
+        $is_en ? '13.84mm' : '14.13mm'
+    );
     ?>
     <div class="out_wrap breadcrumb_info">
         <div class="content_wrap">
@@ -818,7 +913,83 @@ if (!defined('ABSPATH')) {
 
                 <header>
                     <h1><?php echo esc_html($clean_title); ?></h1>
-                    <p class="lisun-manual-subtitle"><?php echo esc_html($subtitle); ?></p>
+                    <?php /* 2026-11-09 副标题行右侧加「下载 PDF」按钮；打印时整行隐藏（保留空行），见 front.css */ ?>
+                    <div class="lisun-subtitle-row">
+                        <p class="lisun-manual-subtitle"><?php echo esc_html($subtitle); ?></p>
+                        <a class="lisun-pdf-btn"
+                           href="<?php echo esc_url(add_query_arg('lisun_pdf', '1', get_permalink())); ?>"
+                           download
+                           data-filename="<?php echo esc_attr(sanitize_file_name(get_the_title() . ' - ' . ($is_en ? "User's Manual" : '操作使用说明书') . '.pdf')); ?>">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                            <?php echo $is_en ? 'Download PDF' : '下载 PDF'; ?>
+                        </a>
+                    </div>
+                    <?php /* 2026-11-09 下载防重复点击：点击即进入加载态，fetch 接管，成功/失败给状态 */ ?>
+                    <script>
+                    (function () {
+                        var btn = document.querySelector('.lisun-pdf-btn');
+                        if (!btn || btn.dataset.lisunPdfBound) return;
+                        btn.dataset.lisunPdfBound = '1';
+                        var isEn = <?php echo $is_en ? 'true' : 'false'; ?>;
+                        var origHTML = btn.innerHTML;
+                        var busy = false;
+
+                        var ICON_SPIN = '<svg class="lisun-pdf-spin" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="42" stroke-dashoffset="14" stroke-linecap="round"/></svg>';
+                        var ICON_OK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>';
+                        var ICON_WARN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>';
+
+                        function setState(html, cls, text, restoreMs) {
+                            btn.className = btn.className.replace(/\bis-(loading|done|error)\b/g, ' ').replace(/\s+/g, ' ').trim();
+                            if (cls) btn.classList.add(cls);
+                            btn.innerHTML = html + '<span>' + text + '</span>';
+                            if (restoreMs) {
+                                setTimeout(function () {
+                                    btn.classList.remove(cls);
+                                    btn.innerHTML = origHTML;
+                                    busy = false;
+                                }, restoreMs);
+                            }
+                        }
+
+                        btn.addEventListener('click', function (e) {
+                            if (busy) { e.preventDefault(); return; }
+                            busy = true;
+                            e.preventDefault();
+                            setState(ICON_SPIN, 'is-loading', isEn ? 'Generating…' : '生成中…');
+
+                            fetch(btn.href, { credentials: 'same-origin' })
+                                .then(function (r) {
+                                    var ct = (r.headers.get('content-type') || '').toLowerCase();
+                                    if (!r.ok || ct.indexOf('pdf') === -1) {
+                                        // 回落到登录页 HTML：多半是会话过期/门禁未过
+                                        throw new Error(ct.indexOf('html') !== -1 ? 'login' : 'http-' + r.status);
+                                    }
+                                    var cd = r.headers.get('content-disposition') || '';
+                                    var m = /filename\*=UTF-8''([^;\s]+)/i.exec(cd);
+                                    var name = m ? decodeURIComponent(m[1].replace(/"/g, ''))
+                                               : (btn.getAttribute('data-filename') || 'manual.pdf');
+                                    return r.blob().then(function (b) { return { b: b, name: name }; });
+                                })
+                                .then(function (o) {
+                                    var url = URL.createObjectURL(o.b);
+                                    var a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = o.name;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    a.remove();
+                                    setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+                                    setState(ICON_OK, 'is-done', isEn ? 'Downloaded' : '已开始下载', 2500);
+                                })
+                                .catch(function (err) {
+                                    var msg = (err && err.message === 'login')
+                                        ? (isEn ? 'Please refresh & sign in' : '请刷新页面后重试')
+                                        : (isEn ? 'Failed, click to retry' : '生成失败，点击重试');
+                                    setState(ICON_WARN, 'is-error', msg, 3000);
+                                });
+                        });
+                    })();
+                    </script>
                     <?php $product_no = function_exists('get_field') ? get_field('product-no') : ''; ?>
                     <?php $model_tags = get_the_tags(); ?>
                     <?php if (!empty($model_tags)): ?>
@@ -894,9 +1065,10 @@ if (!defined('ABSPATH')) {
                 <?php $sec_num = 0; ?>
 
                 <?php if (!empty($software)): $sec_num++; ?>
-                <div class="lisun-dl-sub-title" data-num="<?php echo $sec_num; ?>">
+                <?php /* 2026-11-09 用 h2 而非 div：PDF 书签按标题层级生成，div 不会进大纲 */ ?>
+                <h2 class="lisun-dl-sub-title" data-num="<?php echo $sec_num; ?>">
                     <?php echo $is_en ? 'Software & Drivers' : '软件与驱动'; ?>
-                </div>
+                </h2>
                 <div class="lisun-software-list">
                     <?php foreach ($software as $s): ?>
                     <div class="lisun-software-item">
@@ -920,26 +1092,51 @@ if (!defined('ABSPATH')) {
                             </a>
                             <?php endif; ?>
                         </div>
+                        <?php /* 2026-11-09 打印用：明文展示下载地址（屏幕隐藏） */ ?>
+                        <div class="lisun-software-urls">
+                            <?php if (!empty($s['url'])): ?>
+                            <div class="lisun-software-url"><span class="lisun-software-url-label"><?php echo $is_en ? 'Address 1' : '下载地址 1'; ?>：</span><span class="lisun-software-url-value"><?php echo esc_html($s['url']); ?></span></div>
+                            <?php endif; ?>
+                            <?php if (!empty($s['url2'])): ?>
+                            <div class="lisun-software-url"><span class="lisun-software-url-label"><?php echo $is_en ? 'Address 2' : '下载地址 2'; ?>：</span><span class="lisun-software-url-value"><?php echo esc_html($s['url2']); ?></span></div>
+                            <?php endif; ?>
+                        </div>
                     </div>
                     <?php endforeach; ?>
                 </div>
                 <?php endif; ?>
 
-                <?php if (!empty($videos)): $sec_num++; ?>
-                <div class="lisun-dl-sub-title" data-num="<?php echo $sec_num; ?>">
+                <?php if (!empty($videos)): $sec_num++;
+                /* 2026-11-09 PDF 渲染通道下不加载视频 iframe：打印时 iframe 本就隐藏，
+                   但 Chrome 要等 load 事件，外链播放器会明显拖慢生成。 */
+                $is_pdf_render = isset($_GET['lisun_pdf_render']);
+                ?>
+                <h2 class="lisun-dl-sub-title" data-num="<?php echo $sec_num; ?>">
                     <?php echo $is_en ? 'Videos' : '视频资料'; ?>
-                </div>
+                </h2>
                 <?php foreach ($videos as $v):
                     $embed_url = $v['url'];
                     // YouTube: 统一转为 embed 格式
                     if (preg_match('/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]+)/', $v['url'], $m)) {
                         $embed_url = 'https://www.youtube.com/embed/' . $m[1];
                     }
+                    /* 2026-11-09 二维码落地页：库里存的是播放器嵌址，扫码后应落到视频页，
+                       bilibili player.html?aid=xxx -> bilibili.com/video/avxxx；
+                       YouTube embed/ID -> watch?v=ID；协议相对地址补 https。 */
+                    $qr_url = $v['url'];
+                    if (strpos($qr_url, '//') === 0) {
+                        $qr_url = 'https:' . $qr_url;
+                    }
+                    if (preg_match('#player\.bilibili\.com/player\.html\?.*?\baid=(\d+)#', $qr_url, $qm)) {
+                        $qr_url = 'https://www.bilibili.com/video/av' . $qm[1];
+                    } elseif (preg_match('#youtube\.com/embed/([A-Za-z0-9_-]+)#', $qr_url, $qm)) {
+                        $qr_url = 'https://www.youtube.com/watch?v=' . $qm[1];
+                    }
                 ?>
-                <div style="margin:0 0 20px 0;">
+                <div class="lisun-video-block" style="margin:0 0 20px 0;">
                     <h3 style="margin:0 0 8px 0;font-size:15px;line-height:1.5;"><?php echo esc_html($v['name']); ?></h3>
-                    <div style="position:relative;width:100%;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:4px;background:#000;">
-                        <iframe src="<?php echo esc_url($embed_url); ?>"
+                    <div class="lisun-video-embed" style="position:relative;width:100%;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:4px;background:#000;">
+                        <iframe <?php echo $is_pdf_render ? 'data-src' : 'src'; ?>="<?php echo esc_url($embed_url); ?>"
                                 style="position:absolute;top:0;left:0;width:100%;height:100%;border:0;"
                                 scrolling="no"
                                 allowfullscreen
@@ -947,10 +1144,58 @@ if (!defined('ABSPATH')) {
                                 sandbox="allow-scripts allow-same-origin allow-popups"
                                 title="<?php echo esc_attr($v['name']); ?>"></iframe>
                     </div>
+                    <?php /* 2026-11-09 打印用二维码：屏幕隐藏，纸上由 JS 生成的 SVG 呈现 */ ?>
+                    <div class="lisun-video-qr" data-qr="<?php echo esc_attr($qr_url); ?>">
+                        <div class="lisun-video-qr-tip"><?php echo $is_en ? 'Scan to watch the video' : '扫码观看视频'; ?></div>
+                        <div class="lisun-video-qr-code"></div>
+                        <div class="lisun-video-qr-url"><?php echo esc_html($qr_url); ?></div>
+                    </div>
                 </div>
                 <?php endforeach; ?>
                 <?php endif; ?>
             </div>
+            <?php endif; ?>
+
+            <?php if (!empty($videos)): ?>
+            <?php /* 2026-11-09 附录二维码：qrcode-generator 输出 SVG（矢量，打印不糊）。
+               脚本在正文里执行，qrcode.js 在页脚入队，故等 DOMContentLoaded / load 再画。 */ ?>
+            <script>
+            (function () {
+                function boot() {
+                    var boxes = document.querySelectorAll('.lisun-video-qr[data-qr]');
+                    if (!boxes.length || typeof qrcode === 'undefined') return;
+                    for (var i = 0; i < boxes.length; i++) {
+                        var box = boxes[i];
+                        if (box.getAttribute('data-qr-done')) continue;
+                        box.setAttribute('data-qr-done', '1');
+                        var holder = box.querySelector('.lisun-video-qr-code') || box;
+                        try {
+                            var qr = qrcode(0, 'M');
+                            qr.addData(box.getAttribute('data-qr'));
+                            qr.make();
+                            holder.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
+                            var svg = holder.querySelector('svg');
+                            if (svg) {
+                                var n = qr.getModuleCount();
+                                svg.removeAttribute('width');
+                                svg.removeAttribute('height');
+                                /* 2026-11-09 修正：createSvgTag 的坐标单位是 cellSize（此处 4），
+                                   viewBox 必须同量级，否则只显示左上角一块（二维码变成大黑块）。 */
+                                var cell = 4;
+                                svg.setAttribute('viewBox', '0 0 ' + (n * cell) + ' ' + (n * cell));
+                                svg.setAttribute('shape-rendering', 'crispEdges');
+                            }
+                        } catch (e) { /* 单条失败不影响页面 */ }
+                    }
+                }
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', boot);
+                    window.addEventListener('load', boot);
+                } else {
+                    boot();
+                }
+            })();
+            </script>
             <?php endif; ?>
 
         </main>

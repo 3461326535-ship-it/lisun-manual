@@ -31,6 +31,7 @@ if (file_exists($composer_autoload)) {
 require_once LISUN_MANUAL_PATH . 'includes/trait-nonce.php';
 // 加载核心类
 require_once LISUN_MANUAL_PATH . 'includes/class-cpt.php';
+require_once LISUN_MANUAL_PATH . 'includes/class-pdf-download.php';
 require_once LISUN_MANUAL_PATH . 'includes/class-admin-menu.php';
 require_once LISUN_MANUAL_PATH . 'includes/class-import.php';
 require_once LISUN_MANUAL_PATH . 'includes/class-import-parser.php';
@@ -165,6 +166,7 @@ function lisun_manual_init() {
     Lisun_Manual_Settings::init();
     Lisun_Manual_Proxy_Subscription::init();
     Lisun_Manual_Image_Cleaner::init();
+    Lisun_Manual_Pdf_Download::init();   // 2026-11-09 详情页 PDF 下载
 
     // 为说明书内容中的图片补充 wp-image-{id} class，使 WordPress 自动生成 srcset/sizes
     add_filter('the_content', 'lisun_manual_make_images_responsive', 5);
@@ -589,11 +591,27 @@ function lisun_manual_front_enqueue() {
         return;
     }
 
+    /* 2026-11-09 14:30 样式表版本号改用文件修改时间：
+       原先固定用 LISUN_MANUAL_VERSION（插件版本），改 front.css 后版本号不变，
+       浏览器与 CDN 会继续命中旧缓存（表现为「改了样式但打印还是老版式」）。
+       改用 filemtime 后每次改动样式都会自动失效。 */
+    $lisun_front_css = LISUN_MANUAL_PATH . 'assets/css/front.css';
     wp_enqueue_style(
         'lisun-manual-front',
         LISUN_MANUAL_URL . 'assets/css/front.css',
         [],
-        LISUN_MANUAL_VERSION
+        file_exists($lisun_front_css) ? filemtime($lisun_front_css) : LISUN_MANUAL_VERSION
+    );
+
+    /* 2026-11-09 附录视频二维码：本地引入 qrcode-generator（MIT），不依赖 CDN；
+       仅说明书页加载，页脚输出，模板内联脚本在 DOMContentLoaded 后绘制。 */
+    $lisun_qr_js = LISUN_MANUAL_PATH . 'assets/js/qrcode.js';
+    wp_enqueue_script(
+        'lisun-manual-qrcode',
+        LISUN_MANUAL_URL . 'assets/js/qrcode.js',
+        [],
+        file_exists($lisun_qr_js) ? filemtime($lisun_qr_js) : LISUN_MANUAL_VERSION,
+        true
     );
 
     // 图片加载安全网：修复 CDN 图片优化（如 ESA/Cloudflare Mirage）可能遗留的 data-src 问题。
