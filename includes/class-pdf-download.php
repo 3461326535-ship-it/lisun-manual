@@ -30,7 +30,7 @@ class Lisun_Manual_Pdf_Download {
     const CHROME_DEFAULT = '/opt/lisun-pdf-poc/chrome-headless-shell-linux64/chrome-headless-shell';
     /* 2026-11-09 缓存版本：生成逻辑变化时 +1，旧缓存自动失效。
        v2 = 加入 PDF 书签（--generate-pdf-document-outline） */
-    const CACHE_VER  = 2;
+    const CACHE_VER  = 3;   // v3 = 附录软件链接改锚文本
     /* 2026-11-09 全局排队：同时只允许 1 份生成（单份峰值约 1GB），
        排队等待上限（秒），超时直接失败并让前端提示重试 */
     const GEN_WAIT   = 90;

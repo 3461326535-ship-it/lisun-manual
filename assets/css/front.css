@@ -238,34 +238,26 @@ body {
     .lisun-software-name {
         font-size: 10pt !important;
     }
+    /* 2026-11-09 软件链接：PDF 里 <a> 会保留为可点击注释，故与网页一致输出锚文本，
+       仅隐藏按钮内的下载图标并把尺寸收到适合纸面 */
     .lisun-software-dl-btns {
-        display: none !important;
+        display: flex !important;
+        gap: 2mm;
+        flex-shrink: 0;
     }
-    .lisun-software-urls {
-        display: block !important;
-        flex: 1 0 100%;
-        margin-top: 1.5mm;
-    }
-    /* 2026-11-09 长网址折行后与标签对齐（悬挂缩进） */
-    .lisun-software-url {
-        display: flex;
-        gap: 1.5mm;
-        align-items: flex-start;
-        font-size: 8.5pt;
-        line-height: 1.55;
-        color: #0b64a0;
-    }
-    .lisun-software-url-label {
-        flex: 0 0 auto;
+    .lisun-software-dl-btn {
+        padding: 1.2mm 2.4mm !important;
+        font-size: 8.5pt !important;
+        line-height: 1.2 !important;
+        color: #2563eb !important;
+        background: #eff6ff !important;
+        border: 0.25mm solid #bfdbfe !important;
+        border-radius: 1.2mm !important;
+        text-decoration: none !important;
         white-space: nowrap;
-        color: #444;
-        font-weight: 600;
     }
-    .lisun-software-url-value {
-        flex: 1 1 auto;
-        min-width: 0;
-        word-break: break-all;
-        overflow-wrap: anywhere;
+    .lisun-software-dl-btn svg {
+        display: none !important;
     }
     .lisun-video-block {
         break-inside: avoid;

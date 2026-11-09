@@ -130,8 +130,8 @@ if (!defined('ABSPATH')) {
         border-top: 1px solid #e5e7eb;
     }
 
-    /* 2026-11-09 附录：屏幕端隐藏明文地址与二维码（打印/PDF 显示，规则见 front.css @media print） */
-    .lisun-software-urls,
+    /* 2026-11-09 附录：屏幕端隐藏二维码（打印/PDF 显示，规则见 front.css @media print）；
+       软件链接沿用网页按钮本体，PDF 内可点击，不再另行输出明文地址 */
     .lisun-video-qr {
         display: none;
     }
@@ -1092,15 +1092,8 @@ if (!defined('ABSPATH')) {
                             </a>
                             <?php endif; ?>
                         </div>
-                        <?php /* 2026-11-09 打印用：明文展示下载地址（屏幕隐藏） */ ?>
-                        <div class="lisun-software-urls">
-                            <?php if (!empty($s['url'])): ?>
-                            <div class="lisun-software-url"><span class="lisun-software-url-label"><?php echo $is_en ? 'Address 1' : '下载地址 1'; ?>：</span><span class="lisun-software-url-value"><?php echo esc_html($s['url']); ?></span></div>
-                            <?php endif; ?>
-                            <?php if (!empty($s['url2'])): ?>
-                            <div class="lisun-software-url"><span class="lisun-software-url-label"><?php echo $is_en ? 'Address 2' : '下载地址 2'; ?>：</span><span class="lisun-software-url-value"><?php echo esc_html($s['url2']); ?></span></div>
-                            <?php endif; ?>
-                        </div>
+                        <?php /* 2026-11-09 修订：不再输出明文 URL。
+                           交付客户多为电子版，PDF 里的链接本身可点击，直接沿用网页锚文本。 */ ?>
                     </div>
                     <?php endforeach; ?>
                 </div>
@@ -1148,7 +1141,7 @@ if (!defined('ABSPATH')) {
                     <div class="lisun-video-qr" data-qr="<?php echo esc_attr($qr_url); ?>">
                         <div class="lisun-video-qr-tip"><?php echo $is_en ? 'Scan to watch the video' : '扫码观看视频'; ?></div>
                         <div class="lisun-video-qr-code"></div>
-                        <div class="lisun-video-qr-url"><?php echo esc_html($qr_url); ?></div>
+                        <div class="lisun-video-qr-url"><a href="<?php echo esc_url($qr_url); ?>"><?php echo esc_html($qr_url); ?></a></div>
                     </div>
                 </div>
                 <?php endforeach; ?>
