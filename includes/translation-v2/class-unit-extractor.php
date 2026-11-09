@@ -22,6 +22,13 @@ class Lisun_Manual_V2_Unit_Extractor {
         $units = [];
         $active = null;
         $stack = [];
+        // WordPress content occasionally contains a table inside a paragraph
+        // or figcaption wrapper.  If we keep collecting that outer semantic
+        // unit, the whole table and all following blocks become one DeepL
+        // request and the provider can move text across cell boundaries.
+        // When a table begins inside one of these wrappers, close the wrapper
+        // around the prefix and consume its original closing tag later.
+        $detached_closures = [];
         $tag_counts = [];
         $duplicates = [];
 
@@ -33,7 +40,42 @@ class Lisun_Manual_V2_Unit_Extractor {
                 call_user_func($on_progress, $token_index + 1, $token_total);
             }
             if ($active !== null) {
-                $active['tokens'][] = $token;
+                if ($token['type'] === 'start'
+                    && $token['tag'] === 'table'
+                    && self::can_split_before_table($active)) {
+                    $outer_tag = (string) ($active['outer_tag'] ?? '');
+                    $unit = self::finalize_unit(
+                        $active['tokens'],
+                        $field,
+                        $active['path'],
+                        count($units),
+                        $duplicates,
+                        '</' . $outer_tag . '>'
+                    );
+                    if (trim(html_entity_decode(
+                        wp_strip_all_tags((string) ($unit['inner_html'] ?? '')),
+                        ENT_QUOTES,
+                        'UTF-8'
+                    )) !== '') {
+                        $units[] = $unit;
+                        $skeleton .= '<!--lisun-v2-unit:' . $unit['unit_key'] . '-->';
+                    } else {
+                        // Preserve an empty wrapper without creating an empty
+                        // translation request.
+                        $skeleton .= (string) ($unit['wrapper_open'] ?? '')
+                            . (string) ($unit['wrapper_close'] ?? '');
+                    }
+                    $detached_closures[] = $outer_tag;
+                    $active = null;
+                    // Re-process the table start token below as ordinary
+                    // document structure instead of adding it to the prefix.
+                } else {
+                    $active['tokens'][] = $token;
+                }
+
+                if ($active === null) {
+                    // Continue into the ordinary token handling below.
+                } else {
                 if ($token['type'] === 'start' && !$token['void']) {
                     $active['open_tags'][] = $token['tag'];
                 } elseif ($token['type'] === 'end') {
@@ -54,6 +96,7 @@ class Lisun_Manual_V2_Unit_Extractor {
                     $active = null;
                 }
                 continue;
+                }
             }
 
             if ($token['type'] === 'start') {
@@ -79,6 +122,14 @@ class Lisun_Manual_V2_Unit_Extractor {
             }
 
             if ($token['type'] === 'end') {
+                $detached_index = array_search($token['tag'], $detached_closures, true);
+                if ($detached_index !== false) {
+                    unset($detached_closures[$detached_index]);
+                    $detached_closures = array_values($detached_closures);
+                    // The split prefix already owns a synthetic close tag.
+                    // Do not emit the malformed source close a second time.
+                    continue;
+                }
                 $skeleton .= $token['raw'];
                 for ($i = count($stack) - 1; $i >= 0; $i--) {
                     if ($stack[$i]['tag'] === $token['tag']) {
@@ -107,6 +158,9 @@ class Lisun_Manual_V2_Unit_Extractor {
             $skeleton .= '<!--lisun-v2-unit:' . $unit['unit_key'] . '-->';
         }
 
+        $boundary_check = self::validate_table_unit_boundaries($units);
+        if (is_wp_error($boundary_check)) return $boundary_check;
+
         return [
             'skeleton' => $skeleton,
             'units' => $units,
@@ -132,7 +186,33 @@ class Lisun_Manual_V2_Unit_Extractor {
         ];
     }
 
-    private static function finalize_unit($tokens, $field, $path, $order, &$duplicates) {
+    private static function can_split_before_table($active) {
+        return in_array((string) ($active['outer_tag'] ?? ''), [
+            'p', 'figcaption', 'blockquote', 'li',
+        ], true);
+    }
+
+    /**
+     * A table must never be hidden inside a paragraph/figcaption translation
+     * unit.  A nested table inside a table cell remains part of that cell and
+     * is intentionally allowed.
+     */
+    private static function validate_table_unit_boundaries($units) {
+        foreach ((array) $units as $unit) {
+            $unit_type = strtolower((string) ($unit['unit_type'] ?? ''));
+            if (in_array($unit_type, ['td', 'th'], true)) continue;
+            if (preg_match('/<table\b/i', (string) ($unit['source_html'] ?? ''))) {
+                return new WP_Error(
+                    'v2_table_unit_boundary',
+                    'V2 表格未被拆成独立单元，已停止翻译以避免跨单元格重排',
+                    ['source_path' => (string) ($unit['source_path'] ?? '')]
+                );
+            }
+        }
+        return true;
+    }
+
+    private static function finalize_unit($tokens, $field, $path, $order, &$duplicates, $wrapper_close_override = null) {
         $source_html = Lisun_Manual_V2_Html_Tokenizer::untokenize($tokens);
         $first = reset($tokens);
         $last = end($tokens);
@@ -144,7 +224,9 @@ class Lisun_Manual_V2_Unit_Extractor {
         if ($unit_type !== 'text') {
             $wrapper_open = (string) $first['raw'];
             array_shift($inner_tokens);
-            if ($last && $last['type'] === 'end' && $last['tag'] === $unit_type) {
+            if ($wrapper_close_override !== null) {
+                $wrapper_close = (string) $wrapper_close_override;
+            } elseif ($last && $last['type'] === 'end' && $last['tag'] === $unit_type) {
                 $wrapper_close = (string) $last['raw'];
                 array_pop($inner_tokens);
             }

@@ -8,6 +8,7 @@ if (!defined('ABSPATH')) {
 }
 
 $glossary = Lisun_Manual_Glossary::get_all();
+$trash_count = count(Lisun_Manual_Glossary::get_trash());
 
 // 防御：确保是数组
 if (!is_array($glossary)) {
@@ -87,7 +88,22 @@ $deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '�
                     title="<?php esc_attr_e('从 Google Sheets 同步术语库', 'lisun-manual'); ?>">
                 <?php _e('从 Google Sheets 同步', 'lisun-manual'); ?>
             </button>
+            <button type="button" class="button" id="lisun-open-glossary-trash">
+                回收站<?php echo $trash_count ? ' (' . (int) $trash_count . ')' : ''; ?>
+            </button>
         </div>
+    </div>
+
+    <div id="lisun-glossary-trash-panel" style="display:none;background:#fff;border:1px solid #dcdcde;margin:10px 0 15px;padding:14px 16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;">
+            <h2 style="margin:0;font-size:16px;">术语回收站</h2>
+            <button type="button" class="button" id="lisun-close-glossary-trash">关闭</button>
+        </div>
+        <p id="lisun-glossary-trash-note" style="margin:0 0 10px;color:#646970;">删除的术语会保留 30 天，期间可以恢复。</p>
+        <table class="widefat striped">
+            <thead><tr><th>中文术语</th><th>英文译法</th><th>类别 · 范围</th><th>删除时间</th><th>自动删除日期</th><th>操作</th></tr></thead>
+            <tbody id="lisun-glossary-trash-tbody"><tr><td colspan="6" style="text-align:center;color:#999;">正在加载…</td></tr></tbody>
+        </table>
     </div>
 
     <div id="lisun-deepl-glossary-status" style="margin:10px 0 15px;padding:10px 12px;background:#fff;border:1px solid #dcdcde;border-left:4px solid <?php echo $deepl_last_error !== '' ? '#d63638' : ($deepl_enabled ? '#2271b1' : '#888'); ?>;">
@@ -129,7 +145,7 @@ $deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '�
                         <option value="erp">ERP产品名称</option>
                         <option value="custom">自定义</option>
                     </select>
-                    <p class="description">类别决定默认适用范围：ERP 默认全局，其余默认指定文章。</p>
+                    <p class="description">类别只决定新术语的默认范围；保存后的实际选择优先，后续同步不会按类别覆盖。</p>
                 </td>
             </tr>
             <tr>
@@ -667,6 +683,49 @@ jQuery(function ($) {
         });
     }
 
+    // ========== 回收站 ==========
+    function loadGlossaryTrash() {
+        var $tbody = $('#lisun-glossary-trash-tbody');
+        $tbody.html('<tr><td colspan="6" style="text-align:center;color:#999;">正在加载…</td></tr>');
+        $.post(ajaxurl, {action:'lisun_get_glossary_trash', _nonce:nonce}, function (res) {
+            if (!res.success) { $tbody.html('<tr><td colspan="6" style="text-align:center;color:#d63638;">回收站加载失败</td></tr>'); return; }
+            var items = res.data.items || [];
+            $('#lisun-open-glossary-trash').text('回收站' + (items.length ? ' (' + items.length + ')' : ''));
+            if (!items.length) { $tbody.html('<tr><td colspan="6" style="text-align:center;color:#999;">回收站为空</td></tr>'); return; }
+            var html = '';
+            $.each(items, function (_, item) {
+                html += '<tr data-term-id="' + escAttr(item.term_id || '') + '">' +
+                    '<td>' + escHtml(item.zh || '') + '</td><td>' + escHtml(item.en || '') + '</td>' +
+                    '<td>' + escHtml((CAT_LABELS[item.category] || item.category || '') + ' · ' + (SCOPE_LABELS[item.scope] || item.scope || '')) + '</td>' +
+                    '<td>' + escHtml(item.deleted_at_text || '') + '</td><td>' + escHtml(item.expires_at_text || '') + '</td>' +
+                    '<td><button type="button" class="button button-small lisun-restore-glossary">恢复</button> ' +
+                    '<button type="button" class="button button-small lisun-permanently-delete-glossary" style="color:#d63638;">彻底删除</button></td></tr>';
+            });
+            $tbody.html(html);
+        }).fail(function () { $tbody.html('<tr><td colspan="6" style="text-align:center;color:#d63638;">回收站请求失败</td></tr>'); });
+    }
+
+    $('#lisun-open-glossary-trash').on('click', function () { $('#lisun-glossary-trash-panel').slideDown(120); loadGlossaryTrash(); });
+    $('#lisun-close-glossary-trash').on('click', function () { $('#lisun-glossary-trash-panel').slideUp(120); });
+    $('#lisun-glossary-trash-tbody').on('click', '.lisun-restore-glossary', function () {
+        var $btn = $(this), termId = String($btn.closest('tr').data('term-id') || '');
+        if (!termId || !confirm('确认恢复该术语？')) return;
+        $btn.prop('disabled', true);
+        $.post(ajaxurl, {action:'lisun_restore_glossary', term_id:termId, _nonce:nonce}, function (res) {
+            if (res.success) { loadGlossaryTrash(); loadPage(currentPage); }
+            else { alert((res.data && res.data.message) || '恢复失败'); $btn.prop('disabled', false); }
+        }).fail(function () { alert('恢复请求失败'); $btn.prop('disabled', false); });
+    });
+    $('#lisun-glossary-trash-tbody').on('click', '.lisun-permanently-delete-glossary', function () {
+        var $btn = $(this), termId = String($btn.closest('tr').data('term-id') || '');
+        if (!termId || !confirm('彻底删除后无法恢复，确认继续？')) return;
+        $btn.prop('disabled', true);
+        $.post(ajaxurl, {action:'lisun_permanently_delete_glossary', term_id:termId, _nonce:nonce}, function (res) {
+            if (res.success) loadGlossaryTrash();
+            else { alert((res.data && res.data.message) || '彻底删除失败'); $btn.prop('disabled', false); }
+        }).fail(function () { alert('彻底删除请求失败'); $btn.prop('disabled', false); });
+    });
+
     // 最近应用：默认收起，展开时读取最新一批文章明细
     $('#lisun-glossary-tbody').on('click', '.lisun-recent-apply-toggle', function (e) {
         e.preventDefault();
@@ -901,15 +960,17 @@ jQuery(function ($) {
     // 删除 — 分页感知，reload 当前页
     .on('click', '.lisun-delete-glossary', function (e) {
         e.stopPropagation();
-        if (!confirm('<?php echo esc_js(__('确认删除该术语？', 'lisun-manual')); ?>')) return;
+        if (!confirm('确认将该术语移入回收站？\n\n术语会保留 30 天，期间可以恢复。')) return;
         var $tr = $(this).closest('tr');
-        var index = parseInt($tr.data('index'));
+        var termId = String($tr.data('term-id') || '');
+        if (!termId) { alert('术语缺少唯一标识，无法安全删除，请刷新页面后重试。'); return; }
         $.post(ajaxurl, {
             action: 'lisun_delete_glossary',
-            index: index,
+            term_id: termId,
             _nonce: nonce
         }, function (res) {
             if (res.success) {
+                loadGlossaryTrash();
                 loadPage(currentPage);
             } else {
                 alert(res.data.message || '<?php echo esc_js(__('删除失败', 'lisun-manual')); ?>');
@@ -1161,7 +1222,7 @@ jQuery(function ($) {
             var warningOnly = item.warning_only || (item.post_apply_audit && (item.post_apply_audit.term_count_warning || parseInt(item.post_apply_audit.visible_missing_count || 0, 10) > 0));
             if (warningOnly && status === '已完成') status += '（有警告）';
             var line = escHtml(item.time || item.updated_at || '') + ' · ' + escHtml(status) +
-                ' · ' + (item.scope === 'single' ? '单篇' : '全局') +
+                ' · ' + applicationScopeLabel(item) +
                 ' · 更新 ' + escHtml(item.updated || 0) +
                 ' · 请求 ' + escHtml(item.requests || 0);
             var postAudit = item.post_apply_audit || {};
@@ -1203,11 +1264,9 @@ jQuery(function ($) {
         var statusLabels = {queued:'排队中', processing:'处理中', done:'已完成', finished_with_errors:'部分失败', failed:'失败'};
         var html = '<table class="widefat striped" style="margin-top:8px;"><thead><tr><th>范围</th><th>文章/数量</th><th>状态</th><th>时间</th><th>批次</th></tr></thead><tbody>';
         $.each(history, function (_, item) {
-            var scope = item.scope === 'single' ? '单篇' : '全局';
+            var scope = applicationScopeLabel(item);
             if (item.details && item.details.manual_unlock) scope += '（人工解锁）';
-            var target = item.scope === 'single'
-                ? ('#' + escHtml(item.post_id) + ' ' + escHtml(item.title || ''))
-                : (escHtml(item.total_jobs) + ' 篇');
+            var target = applicationScopeTarget(item);
             html += '<tr><td>' + scope + '</td><td>' + target + '</td><td>' + escHtml(statusLabels[item.status] || item.status || '—') +
                 '</td><td>' + escHtml(item.created_at || '') + '</td><td><code>' + escHtml(item.batch_id || '') + '</code></td></tr>';
             if (item.applications && item.applications.length) {
@@ -1225,7 +1284,31 @@ jQuery(function ($) {
                 html += '</ul></details></td></tr>';
             }
         });
-        return '<h3 style="margin-bottom:4px;">全局与单篇应用记录</h3>' + html + '</tbody></table>';
+        return '<h3 style="margin-bottom:4px;">应用批次记录</h3>' + html + '</tbody></table>';
+    }
+
+    function applicationScopeLabel(item) {
+        item = item || {};
+        var scope = String(item.scope || 'legacy');
+        var count = parseInt(item.total_jobs || 0, 10) || 0;
+        if (scope === 'single') return '单篇';
+        if (scope === 'selected') return count === 1 ? '选定单篇' : '选定范围';
+        if (scope === 'all') return '全部命中文章';
+        // Old rows did not retain whether the user selected a subset. Do not
+        // mislabel them as a global run merely because they contain >1 page.
+        return '旧版批量';
+    }
+
+    function applicationScopeTarget(item) {
+        item = item || {};
+        if (item.scope === 'single') {
+            return '#' + escHtml(item.post_id) + ' ' + escHtml(item.title || '');
+        }
+        if (item.scope === 'selected' && parseInt(item.total_jobs || 0, 10) === 1
+            && item.applications && item.applications.length) {
+            return '#' + escHtml(item.applications[0].post_id || '') + ' ' + escHtml(item.applications[0].title || '');
+        }
+        return escHtml(item.total_jobs || 0) + ' 篇';
     }
 
     function escApplicationState(state) {
@@ -1243,7 +1326,7 @@ jQuery(function ($) {
         if (latest) {
             if (latest.created_at || latest.updated_at) meta.push('应用时间：' + (latest.updated_at || latest.created_at));
             if (latest.batch_id) meta.push('批次：' + latest.batch_id);
-            meta.push('范围：' + (latest.scope === 'single' ? '单篇' : '全局'));
+            meta.push('范围：' + applicationScopeLabel(latest));
         }
         return '<div class="lisun-impact-state' + className + '">' +
             '<span class="lisun-impact-state-title">' + escHtml(title) + '</span>' +
@@ -1264,7 +1347,7 @@ jQuery(function ($) {
             var latest = state.latest || {};
             summaryHtml +=
                 '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">已应用文章</div><div class="lisun-impact-stat-number">' + escHtml(state.applied_articles || 0) + '<small>篇</small></div><div class="lisun-impact-stat-note">当前命中均无需重复应用</div></div>' +
-                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">应用范围</div><div class="lisun-impact-stat-number">' + escHtml(latest.scope === 'single' ? '单篇' : '全局') + '</div><div class="lisun-impact-stat-note">上次成功应用范围</div></div>' +
+                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">应用范围</div><div class="lisun-impact-stat-number">' + escHtml(applicationScopeLabel(latest)) + '</div><div class="lisun-impact-stat-note">上次成功应用范围</div></div>' +
                 '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">应用批次</div><div class="lisun-impact-stat-number" style="font-size:13px;word-break:break-all;">' + escHtml(latest.batch_id || '—') + '</div><div class="lisun-impact-stat-note">记录批次</div></div>' +
                 '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">应用时间</div><div class="lisun-impact-stat-number" style="font-size:13px;">' + escHtml(latest.updated_at || latest.created_at || '—') + '</div><div class="lisun-impact-stat-note">术语状态未变化</div></div>';
         } else {

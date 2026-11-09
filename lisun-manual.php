@@ -3,7 +3,7 @@
  * Plugin Name: LISUN Manual System
  * Plugin URI:  https://lisungroup.cn
  * Description: 双站说明书管理系统 — Word 批量导入、DeepSeek 自动翻译、双站同步、密码保护
- * Version:     1.1.32
+ * Version:     1.1.35
  * Author:      LISUN Group
  * License:     Proprietary
  * Text Domain: lisun-manual
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 // 插件常量
-define('LISUN_MANUAL_VERSION', '1.1.32');
+define('LISUN_MANUAL_VERSION', '1.1.35');
 define('LISUN_MANUAL_PATH', plugin_dir_path(__FILE__));
 define('LISUN_MANUAL_URL', plugin_dir_url(__FILE__));
 define('LISUN_MANUAL_FILE', __FILE__);
@@ -324,9 +324,8 @@ function lisun_manual_template_include($template) {
     // 说明书单页
     if (is_singular('manual')) {
         $plugin_template = LISUN_MANUAL_PATH . 'templates/single-manual.php';
-        // 如果主题中没有 single-manual.php，使用插件自带的
-        $theme_template = locate_template('single-manual.php');
-        if (!$theme_template && file_exists($plugin_template)) {
+        // 说明书详情页由插件统一维护，优先使用插件模板，避免主题中的旧模板覆盖打印结构。
+        if (file_exists($plugin_template)) {
             return $plugin_template;
         }
     }

@@ -19,7 +19,6 @@ class Lisun_Manual_CPT {
         add_action('add_meta_boxes', [__CLASS__, 'add_media_metabox']);
         add_action('add_meta_boxes', [__CLASS__, 'add_model_metabox']);
         add_action('add_meta_boxes', [__CLASS__, 'add_seo_metabox']);
-        add_action('add_meta_boxes', [__CLASS__, 'add_term_panel_metabox']);
         add_action('save_post_manual', [__CLASS__, 'save_tag_metabox']);
         add_action('save_post_manual', [__CLASS__, 'save_media_metabox']);
         add_action('save_post_manual', [__CLASS__, 'save_model_metabox']);
@@ -697,146 +696,6 @@ class Lisun_Manual_CPT {
         <?php
     }
 
-    // ==================== 本篇术语面板 Meta Box ====================
-
-    /**
-     * 详情页「本篇术语」面板。仅在启用术语表且设置里打开
-     * 「详情页显示术语配置面板」时注册。
-     */
-    public static function add_term_panel_metabox() {
-        if (!class_exists('Lisun_Manual_Glossary') || !Lisun_Manual_Glossary::is_enabled()) {
-            return;
-        }
-        if (!get_option('lisun_show_post_term_panel', true)) {
-            return;
-        }
-        add_meta_box(
-            'lisun-post-term-panel',
-            __('本篇术语（翻译时应用）', 'lisun-manual'),
-            [__CLASS__, 'render_term_panel_metabox'],
-            'manual',
-            'side',
-            'default'
-        );
-    }
-
-    public static function render_term_panel_metabox($post) {
-        $post_id = (int) $post->ID;
-        $terms = Lisun_Manual_Glossary::post_term_config($post_id);
-
-        // 全局术语折叠（极少改动），手动/自定义术语按导入时间倒序（新的在上）。
-        $global_terms = [];
-        $article_terms = [];
-        foreach ($terms as $term) {
-            if (($term['scope'] ?? '') === 'global') {
-                $global_terms[] = $term;
-            } else {
-                $article_terms[] = $term;
-            }
-        }
-        $by_import_date_desc = function ($a, $b) {
-            return strcmp((string) ($b['import_date'] ?? ''), (string) ($a['import_date'] ?? ''));
-        };
-        usort($global_terms, $by_import_date_desc);
-        usort($article_terms, $by_import_date_desc);
-        ?>
-        <div id="lisun-post-term-panel-root">
-            <p style="color:#888;font-size:12px;margin:0 0 8px;">
-                <?php _e('勾选本次翻译要应用的术语；未勾选术语按普通文本翻译。全局术语默认启用，可取消以形成「本篇排除」。', 'lisun-manual'); ?>
-            </p>
-            <div id="lisun-post-term-list" style="max-height:320px;overflow-y:auto;margin-bottom:8px;">
-                <?php if (!empty($global_terms)): ?>
-                    <details class="lisun-term-global" style="margin-bottom:6px;">
-                        <summary style="cursor:pointer;font-size:12px;color:#2271b1;font-weight:600;">
-                            <?php echo esc_html(sprintf(__('全局术语（%d）', 'lisun-manual'), count($global_terms))); ?>
-                        </summary>
-                        <div style="margin-left:14px;border-left:2px solid #eee;padding-left:6px;margin-top:4px;">
-                            <?php foreach ($global_terms as $term): ?>
-                                <label style="display:block;font-size:12px;padding:1px 0;">
-                                    <input type="checkbox" class="lisun-post-term-check" data-term-id="<?php echo esc_attr($term['term_id']); ?>"
-                                           <?php checked($term['enabled']); ?>>
-                                    <span style="color:#333;"><?php echo esc_html($term['zh']); ?></span>
-                                    <span style="color:#999;">→ <?php echo esc_html($term['en']); ?></span>
-                                </label>
-                            <?php endforeach; ?>
-                        </div>
-                    </details>
-                <?php endif; ?>
-                <?php if (!empty($article_terms)): ?>
-                    <div class="lisun-term-article">
-                        <div style="font-size:11px;color:#888;border-top:1px solid #eee;margin:2px 0 6px;padding-top:6px;">
-                            <?php _e('手动 / 自定义术语（新的在上）', 'lisun-manual'); ?>
-                        </div>
-                        <?php foreach ($article_terms as $term): ?>
-                            <label style="display:block;font-size:12px;padding:1px 0;">
-                                <input type="checkbox" class="lisun-post-term-check" data-term-id="<?php echo esc_attr($term['term_id']); ?>"
-                                       <?php checked($term['enabled']); ?>>
-                                <span style="color:#333;"><?php echo esc_html($term['zh']); ?></span>
-                                <span style="color:#999;">→ <?php echo esc_html($term['en']); ?></span>
-                            </label>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
-            </div>
-            <p>
-                <button type="button" class="button button-primary button-small" id="lisun-post-term-tmp"><?php _e('仅本次翻译使用', 'lisun-manual'); ?></button>
-                <button type="button" class="button button-small" id="lisun-post-term-save"><?php _e('保存为本篇默认术语', 'lisun-manual'); ?></button>
-            </p>
-            <p id="lisun-post-term-msg" style="color:#2271b1;font-size:12px;display:none;"></p>
-        </div>
-        <script>
-        jQuery(function ($) {
-            var postId = <?php echo (int) $post_id; ?>;
-
-            function collectIds() {
-                return $('#lisun-post-term-list .lisun-post-term-check:checked').map(function () {
-                    return $(this).data('term-id');
-                }).get();
-            }
-
-            function flash(msg, ok) {
-                $('#lisun-post-term-msg').text(msg).css('color', ok ? '#2271b1' : '#d63638').show();
-                setTimeout(function () { $('#lisun-post-term-msg').fadeOut(); }, 3000);
-            }
-
-            $('#lisun-post-term-tmp').on('click', function () {
-                var $btn = $(this).prop('disabled', true);
-                $.post(ajaxurl, {
-                    action: 'lisun_set_post_term_override',
-                    _nonce: <?php echo wp_json_encode(wp_create_nonce('lisun_manual_nonce')); ?>,
-                    post_id: postId,
-                    enabled_ids: collectIds()
-                }, function (res) {
-                    $btn.prop('disabled', false);
-                    if (res.success) flash(res.data.message || '已记录临时选择', true);
-                    else flash((res.data && res.data.message) || '操作失败', false);
-                }).fail(function () {
-                    $btn.prop('disabled', false);
-                    flash('请求失败', false);
-                });
-            });
-
-            $('#lisun-post-term-save').on('click', function () {
-                var $btn = $(this).prop('disabled', true);
-                $.post(ajaxurl, {
-                    action: 'lisun_save_post_term_config',
-                    _nonce: <?php echo wp_json_encode(wp_create_nonce('lisun_manual_nonce')); ?>,
-                    post_id: postId,
-                    enabled_ids: collectIds()
-                }, function (res) {
-                    $btn.prop('disabled', false);
-                    if (res.success) flash('已保存为本篇默认术语', true);
-                    else flash((res.data && res.data.message) || '保存失败', false);
-                }).fail(function () {
-                    $btn.prop('disabled', false);
-                    flash('保存失败', false);
-                });
-            });
-        });
-        </script>
-        <?php
-    }
-
     // ==================== 视频 / 软件下载 Meta Box（支持多项） ====================
 
     /**
@@ -869,6 +728,7 @@ class Lisun_Manual_CPT {
             .lisun-media-row .lisun-media-url { flex:3; }
             .lisun-media-row button { white-space:nowrap; }
             .lisun-media-add { margin-top:4px; }
+            .lisun-video-source { color:#646970; font-size:12px; white-space:nowrap; min-width:72px; }
         </style>
 
         <!-- 软件 -->
@@ -898,10 +758,21 @@ class Lisun_Manual_CPT {
             <div id="lisun-video-rows">
                 <?php foreach ($videos as $i => $v): ?>
                 <div class="lisun-media-row">
+                    <?php
+                    $video_source = $v['source'] ?? 'manual';
+                    $video_source_label = $video_source === 'product'
+                        ? '产品页同步'
+                        : ($video_source === 'manual_override' ? '人工覆盖' : '手动添加');
+                    ?>
+                    <span class="lisun-video-source"><?php echo esc_html($video_source_label); ?></span>
                     <input type="text" name="lisun_video_name[]" value="<?php echo esc_attr($v['name'] ?? ''); ?>"
                            placeholder="视频名称" class="lisun-media-name">
                     <input type="url" name="lisun_video_url[]" value="<?php echo esc_url($v['url'] ?? ''); ?>"
                            placeholder="https://youtu.be/..." class="lisun-media-url">
+                    <input type="hidden" name="lisun_video_source[]" value="<?php echo esc_attr($video_source); ?>">
+                    <input type="hidden" name="lisun_video_original_url[]" value="<?php echo esc_attr($v['original_url'] ?? ($v['url'] ?? '')); ?>">
+                    <input type="hidden" name="lisun_video_original_name[]" value="<?php echo esc_attr($v['original_name'] ?? ($v['name'] ?? '')); ?>">
+                    <input type="hidden" name="lisun_video_source_model[]" value="<?php echo esc_attr($v['source_model'] ?? ''); ?>">
                     <button type="button" class="button lisun-remove-row">✕</button>
                 </div>
                 <?php endforeach; ?>
@@ -911,7 +782,8 @@ class Lisun_Manual_CPT {
             </button>
         </div>
 
-        <p class="description" style="margin-top:8px;">全部留空则不显示"相关下载"模块。</p>
+        <p class="description" style="margin-top:8px;">产品页操作视频会自动同步到这里；修改后会保留人工覆盖。需要恢复已删除的产品视频时，可点击下面的重新同步。</p>
+        <p style="margin:8px 0 0;"><button type="submit" class="button" name="lisun_sync_product_videos_now" value="1">从产品页重新同步视频</button></p>
 
         <script>
         jQuery(function($) {
@@ -950,14 +822,78 @@ class Lisun_Manual_CPT {
 
         // 视频
         $videos = [];
-        $v_names = $_POST['lisun_video_name'] ?? [];
-        $v_urls  = $_POST['lisun_video_url'] ?? [];
-        foreach ($v_names as $i => $name) {
-            $url = trim($v_urls[$i] ?? '');
-            $name = trim($name);
+        $v_names       = (array) ($_POST['lisun_video_name'] ?? []);
+        $v_urls        = (array) ($_POST['lisun_video_url'] ?? []);
+        $v_sources     = (array) ($_POST['lisun_video_source'] ?? []);
+        $v_old_urls    = (array) ($_POST['lisun_video_original_url'] ?? []);
+        $v_old_names   = (array) ($_POST['lisun_video_original_name'] ?? []);
+        $v_source_model = (array) ($_POST['lisun_video_source_model'] ?? []);
+
+        // 删除产品自动视频后记入抑制列表，避免下一次定时同步又把用户明确删除的行加回来。
+        $suppressed = json_decode((string) get_post_meta($post_id, '_lisun_manual_video_suppressions', true), true);
+        $suppressed = is_array($suppressed) ? $suppressed : [];
+        if (!empty($_POST['lisun_sync_product_videos_now'])) {
+            // 显式点击“重新同步”才解除用户之前的删除抑制。
+            $suppressed = [];
+            delete_post_meta($post_id, '_lisun_manual_video_suppressions');
+        }
+        $posted_original_product_urls = [];
+
+        foreach ($v_names as $i => $raw_name) {
+            $url = trim((string) ($v_urls[$i] ?? ''));
+            $name = trim((string) $raw_name);
+            $source = sanitize_key($v_sources[$i] ?? 'manual');
+            $old_url = esc_url_raw(trim((string) ($v_old_urls[$i] ?? '')));
+            $old_name = sanitize_text_field($v_old_names[$i] ?? '');
+            $source_model = sanitize_text_field($v_source_model[$i] ?? '');
             if ($url !== '') {
-                $videos[] = ['name' => $name ?: 'Video ' . ($i + 1), 'url' => esc_url_raw($url)];
+                $entry = [
+                    'name' => $name ?: 'Video ' . ($i + 1),
+                    'url' => esc_url_raw($url),
+                    'video_type' => 'operation',
+                ];
+
+                if ($source === 'product') {
+                    $posted_original_product_urls[] = $old_url ?: $entry['url'];
+                    $entry['source'] = 'product';
+                    $entry['source_model'] = $source_model;
+                    $entry['original_url'] = $old_url ?: $entry['url'];
+                    $entry['original_name'] = $old_name ?: $entry['name'];
+                } elseif ($source === 'manual_override') {
+                    $entry['source'] = 'manual_override';
+                    $entry['source_model'] = $source_model;
+                    $entry['original_url'] = $old_url;
+                    $entry['original_name'] = $old_name;
+                } else {
+                    // 新增行以及没有来源标记的旧行都视为人工维护内容。
+                    $entry['source'] = 'manual';
+                }
+
+                // 产品同步行只要被改名或改 URL，就变成人工覆盖，不再被自动同步覆盖。
+                if ($source === 'product' && (($old_url !== '' && $entry['url'] !== $old_url)
+                    || ($old_name !== '' && $entry['name'] !== $old_name))) {
+                    $entry['source'] = 'manual_override';
+                    $entry['original_url'] = $old_url ?: $entry['url'];
+                    $entry['original_name'] = $old_name ?: $entry['name'];
+                }
+
+                $videos[] = $entry;
             }
+        }
+
+        // 只有原本的产品同步行被删除时才记录；人工行删除不会影响产品同步。
+        $previous = json_decode((string) get_post_meta($post_id, '_lisun_manual_videos', true), true);
+        foreach ((array) $previous as $old_video) {
+            if (!is_array($old_video) || ($old_video['source'] ?? '') !== 'product') continue;
+            $old_url = (string) ($old_video['original_url'] ?? $old_video['url'] ?? '');
+            if ($old_url !== '' && !in_array($old_url, $posted_original_product_urls, true)) {
+                $suppressed[$old_url] = current_time('mysql');
+            }
+        }
+        if (!empty($suppressed)) {
+            update_post_meta($post_id, '_lisun_manual_video_suppressions', wp_json_encode($suppressed, JSON_UNESCAPED_UNICODE));
+        } else {
+            delete_post_meta($post_id, '_lisun_manual_video_suppressions');
         }
         update_post_meta($post_id, '_lisun_manual_videos', !empty($videos) ? wp_json_encode($videos, JSON_UNESCAPED_UNICODE) : '');
 

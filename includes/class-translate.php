@@ -3003,6 +3003,15 @@ class Lisun_Manual_Translate {
             'duration' => $duration,
             'chars' => self::$deepl_chars_used,
         ]);
+        if (!$is_glossary_apply
+            && class_exists('Lisun_Manual_Glossary_Apply')
+            && !empty($result['glossary_term_ids'])) {
+            Lisun_Manual_Glossary_Apply::record_full_translation_applications(
+                $post_id,
+                (int) ($result['revision_id'] ?? 0),
+                (array) $result['glossary_term_ids']
+            );
+        }
         return [
             'v2' => true,
             'message' => $is_glossary_apply ? 'V2 术语表已应用并推送' : 'V2 翻译完成并推送',

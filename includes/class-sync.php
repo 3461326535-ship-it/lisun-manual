@@ -191,6 +191,18 @@ class Lisun_Manual_Sync {
             return new WP_Error('no_config', __('远程站连接未配置', 'lisun-manual'));
         }
 
+        // 2026-11-03：远程推送是所有翻译、术语应用和重推路径的公共出口。
+        // 10 月 29 日保留的单元级媒体同步仍负责增量复用；这里再以当前中文
+        // post_content 为权威源，确保任何分支最终发出的图片都不是历史旧图。
+        $source_post = get_post((int) $zh_post_id);
+        if ($source_post && isset($source_post->post_content)) {
+            $en_content = self::sync_current_source_images(
+                (string) $source_post->post_content,
+                (string) $en_content
+            );
+            if (is_wp_error($en_content)) return $en_content;
+        }
+
         // 本地内容可保留术语锚点，但公开远程站只接收干净正文。
         if (class_exists('Lisun_Manual_Translate') && method_exists('Lisun_Manual_Translate', 'strip_glossary_anchors')) {
             $en_title = Lisun_Manual_Translate::strip_glossary_anchors($en_title);
@@ -309,6 +321,43 @@ class Lisun_Manual_Sync {
         $remote_id = intval($data['id'] ?? 0);
         update_post_meta($zh_post_id, '_lisun_manual_remote_id', $remote_id);
         return $remote_id;
+    }
+
+    /**
+     * 2026-11-03：在远程请求边界按顺序复制当前中文源文的完整图片标记。
+     * 数量不一致时无法唯一定位，必须停止推送，不能猜测或继续报告成功。
+     */
+    private static function sync_current_source_images($source_html, $english_html) {
+        preg_match_all('/<img\b[^>]*>/is', (string) $source_html, $source_matches);
+        preg_match_all('/<img\b[^>]*>/is', (string) $english_html, $english_matches);
+        $source_tags = array_values((array) ($source_matches[0] ?? []));
+        $english_tags = array_values((array) ($english_matches[0] ?? []));
+
+        if (count($source_tags) !== count($english_tags)) {
+            return new WP_Error(
+                'remote_image_count_mismatch',
+                sprintf(
+                    '远程推送前图片校验失败：当前中文源文 %d 张，英文正文 %d 张，已停止推送',
+                    count($source_tags),
+                    count($english_tags)
+                ),
+                [
+                    'source_images' => count($source_tags),
+                    'english_images' => count($english_tags),
+                ]
+            );
+        }
+        if (!$source_tags) return (string) $english_html;
+
+        $index = 0;
+        $synced = preg_replace_callback(
+            '/<img\b[^>]*>/is',
+            static function ($match) use (&$index, $source_tags) {
+                return (string) ($source_tags[$index++] ?? $match[0]);
+            },
+            (string) $english_html
+        );
+        return is_string($synced) ? $synced : (string) $english_html;
     }
 
     /**
@@ -919,6 +968,7 @@ class Lisun_Manual_Sync {
 .lisun-manual-content{max-width:950px;line-height:1.6;font-size:13px!important;font-weight:normal!important;color:#333;letter-spacing:0.2px;font-family:"Microsoft YaHei","微软雅黑",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
 .lisun-manual-content p{margin:.8em 0;font-size:13px!important;line-height:23px!important;font-weight:normal!important}
 .lisun-manual-content table,.lisun-manual-table{border-collapse:collapse;margin:1.2em 0;font-size:13px!important;font-weight:normal!important;border:1px solid #ccc!important;table-layout:auto!important;word-break:normal!important;overflow-wrap:break-word!important;hyphens:auto!important;content-visibility:auto;contain-intrinsic-size:auto 200px}
+.lisun-manual-content table,.lisun-manual-content table tr,.lisun-manual-content table th,.lisun-manual-content table td,.lisun-manual-table,.lisun-manual-table tr,.lisun-manual-table th,.lisun-manual-table td{height:auto!important}
 .lisun-manual-content td,.lisun-manual-content th,.lisun-manual-table td,.lisun-manual-table th{border:1px solid #ccc!important;padding:8px 12px;text-align:left;vertical-align:top;font-size:13px!important;font-weight:normal!important;overflow-wrap:break-word!important;word-break:normal!important;hyphens:auto!important;white-space:normal!important}
 .lisun-manual-content table.lisun-model-number-table,.lisun-manual-content table.lisun-two-column-table{table-layout:fixed!important;width:100%!important;min-width:100%!important;max-width:none!important}
 .lisun-manual-content .table-scroll-container table.lisun-model-number-table,.lisun-manual-content .table-scroll-container .lisun-manual-table.lisun-model-number-table,.lisun-manual-content .table-scroll-container table.lisun-two-column-table,.lisun-manual-content .table-scroll-container .lisun-manual-table.lisun-two-column-table{table-layout:fixed!important;width:100%!important;min-width:100%!important;max-width:none!important}

@@ -37,6 +37,13 @@ class Lisun_Manual_V2_Planner {
         $reused = [];
         foreach ($prepared_by_key as $key => $prepared) {
             $old = $old_units[$key] ?? null;
+            // 2026-10-29：媒体资源属于源文结构；可见文字未变时也必须检测图片变化。
+            $media_changed = $old
+                && self::media_signature($old['source_html'] ?? '')
+                    !== self::media_signature($prepared['unit']['source_html'] ?? '');
+            $media_count_changed = $media_changed
+                && self::media_count($old['source_html'] ?? '')
+                    !== self::media_count($prepared['unit']['source_html'] ?? '');
             $can_reuse = !$force && !isset($force_unit_keys[(string) $key]) && $old
                 // A degraded unit has already lost one or more stable term
                 // anchors. It must be sent through DeepL again; reusing its
@@ -44,7 +51,10 @@ class Lisun_Manual_V2_Planner {
                 && (string) ($old['status'] ?? '') !== 'degraded'
                 && self::source_unit_matches($old, $prepared['unit'])
                 && (string) ($old['occurrence_signature'] ?? '') === (string) $prepared['occurrence_signature']
-                && (string) ($old['target_template'] ?? '') !== '';
+                && (string) ($old['target_template'] ?? '') !== ''
+                // 2026-10-29：文本单元内图片数量发生增删时结构已经变化，需要重新处理；
+                // 纯图片单元没有需要翻译的文本，可以直接用当前源文媒体更新。
+                && (!$media_count_changed || trim((string) ($prepared['unit']['source_text'] ?? '')) === '');
             if ($can_reuse) {
                 // A split/unknown unit may be reused only while the current
                 // glossary still describes the same visible boundary. If the
@@ -72,7 +82,15 @@ class Lisun_Manual_V2_Planner {
             }
 
             $unit = $prepared['unit'];
-            $unit['target_template'] = $old['target_template'];
+            // 2026-10-29：复用英文文字时同步当前源文的图片标记；纯图片单元即使
+            // 图片数量发生变化也在本地处理，不额外请求翻译接口。
+            // 2026-11-03：最终版合并时保留上述逻辑，并与 Runner 的完整源文重建
+            // 检测配合，避免历史 target_template 把旧图片 URL 再次写回远程站。
+            $unit['target_template'] = self::sync_image_tags(
+                (string) $old['target_template'],
+                (string) ($unit['source_html'] ?? ''),
+                trim((string) ($unit['source_text'] ?? '')) === ''
+            );
             $unit['occurrence_signature'] = $prepared['occurrence_signature'];
             $unit['occurrences'] = self::merge_occurrence_fallbacks(
                 $prepared['occurrences'],
@@ -110,6 +128,32 @@ class Lisun_Manual_V2_Planner {
             return trim((string) preg_replace('/\s+/u', ' ', $value));
         };
         return $normalize($old['source_text'] ?? '') === $normalize($current['source_text'] ?? '');
+    }
+
+    private static function sync_image_tags($target, $source, $image_only = false) {
+        preg_match_all('/<img\b[^>]*>/is', (string) $source, $source_matches);
+        preg_match_all('/<img\b[^>]*>/is', (string) $target, $target_matches);
+        $source_tags = array_values($source_matches[0] ?? []);
+        $target_tags = array_values($target_matches[0] ?? []);
+        if (count($source_tags) !== count($target_tags)) {
+            return $image_only ? (string) $source : (string) $target;
+        }
+        if (!$source_tags) return (string) $target;
+        $index = 0;
+        $synced = preg_replace_callback('/<img\b[^>]*>/is', function ($match) use (&$index, $source_tags) {
+            return $source_tags[$index++] ?? $match[0];
+        }, (string) $target);
+        return is_string($synced) ? $synced : (string) $target;
+    }
+
+    private static function media_signature($html) {
+        preg_match_all('/<img\b[^>]*>/is', (string) $html, $matches);
+        return implode("\n", array_map('trim', (array) ($matches[0] ?? [])));
+    }
+
+    private static function media_count($html) {
+        preg_match_all('/<img\b[^>]*>/is', (string) $html, $matches);
+        return count((array) ($matches[0] ?? []));
     }
 
     private static function indexed_terms($current) {

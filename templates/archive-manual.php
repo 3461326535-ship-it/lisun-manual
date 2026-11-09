@@ -480,10 +480,8 @@ $is_en = get_option('lisun_page_lang', 'zh') === 'en';
         <div class="lisun-archive-list">
             <?php while (have_posts()): the_post();
                 $lang = get_post_meta(get_the_ID(), '_lisun_manual_lang', true);
-                $product_no = get_post_meta(get_the_ID(), 'product-no', true);
-                $videos     = !empty($product_no) && class_exists('Lisun_Manual_Product_Video_Compat')
-                    ? Lisun_Manual_Product_Video_Compat::get_by_model($product_no, $lang)
-                    : [];
+                // 归档页只读取后台同步/人工保存的记录，不在前台实时匹配产品视频。
+                $videos     = json_decode(get_post_meta(get_the_ID(), '_lisun_manual_videos', true), true) ?: [];
                 $software   = json_decode(get_post_meta(get_the_ID(), '_lisun_manual_software', true), true) ?: [];
 
                 // 去掉 "xxx操作说明书" / "xxx说明书" 等后缀，只保留产品名称

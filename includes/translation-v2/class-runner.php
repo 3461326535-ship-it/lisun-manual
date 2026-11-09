@@ -247,13 +247,16 @@ class Lisun_Manual_V2_Runner {
                 (string) ($active_title_units[0]['source_text'] ?? '')
             );
 
-        // 图片 URL 位于文档骨架而不是翻译单元文本里，仅比较语义文本会漏掉
+        // 2026-10-29：图片 URL 位于文档骨架或翻译单元源码中，仅比较语义文本会漏掉
         // “只换了图片”的修改：正文文字没变，但远程站必须收到新的图片链接，
         // 否则会一直显示换图前的旧图。这里按顺序比较 <img src>，避免把换图
         // 误判成“仅格式变化”而跳过重译。
+        // 2026-11-03：不能只比较 source_skeleton；先把历史 source_html 单元放回
+        // 骨架，得到完整历史源文后再比较，否则单元内部的换图仍会被漏掉。
+        $active_source_html = self::rebuild_active_source_html($active);
         if ($body_matches && $title_matches
             && self::image_src_signature((string) $content)
-                !== self::image_src_signature((string) ($active['revision']['source_skeleton'] ?? ''))) {
+                !== self::image_src_signature($active_source_html)) {
             return [
                 'matches' => false,
                 'raw_matches' => false,
@@ -335,6 +338,22 @@ class Lisun_Manual_V2_Runner {
             }
         }
         return $urls;
+    }
+
+    /** 2026-11-03：比较媒体前，把历史源文单元重新插回存储的 skeleton。 */
+    private static function rebuild_active_source_html($active) {
+        $html = (string) ($active['revision']['source_skeleton'] ?? '');
+        foreach ((array) ($active['units'] ?? []) as $unit) {
+            if ((string) ($unit['field_name'] ?? $unit['field'] ?? 'content') !== 'content') continue;
+            $key = (string) ($unit['unit_key'] ?? '');
+            if ($key === '') continue;
+            $html = str_replace(
+                '<!--lisun-v2-unit:' . $key . '-->',
+                (string) ($unit['source_html'] ?? ''),
+                $html
+            );
+        }
+        return $html;
     }
 
     /**
@@ -427,7 +446,28 @@ class Lisun_Manual_V2_Runner {
         // Repair it locally when the old value is uniquely identifiable; never
         // silently publish a partially updated glossary result.
         $slot_repair = self::repair_glossary_slots($units, (array) ($active['occurrences'] ?? []));
-        if (is_wp_error($slot_repair)) return $slot_repair;
+        if (is_wp_error($slot_repair)) {
+            $repair_data = $slot_repair->get_error_data();
+            $repair_units = array_values(array_unique(array_filter(array_map('strval',
+                (array) ($repair_data['unit_keys'] ?? [])
+            ))));
+            if ($slot_repair->get_error_code() === 'v2_glossary_slot_mismatch' && !empty($repair_units)) {
+                // A missing historical slot cannot be repaired by guessing and
+                // should not trigger a full-document retry. Translate each
+                // affected unit once; the planner reuses every other unit.
+                self::log('V2 glossary-only reroute post=' . (int) $post_id
+                    . ' reason=slot_mismatch units=' . count($repair_units)
+                    . ' action=incremental_translate');
+                return self::translate_document(
+                    $post_id,
+                    $content,
+                    $title,
+                    false,
+                    $repair_units
+                );
+            }
+            return $slot_repair;
+        }
         $units = $slot_repair['units'];
         foreach ($units as $unit) {
             if ($unit['field'] === 'content') $content_units[] = $unit;
@@ -509,6 +549,12 @@ class Lisun_Manual_V2_Runner {
 
         return [
             'revision_id' => $revision,
+            // Preserve the exact one-shot selection used by this run. The
+            // temporary post override is cleared during planning, so the
+            // publication stage must not re-read the post defaults.
+            'glossary_term_ids' => array_values(array_filter(array_map(function ($term) {
+                return (string) ($term['term_id'] ?? '');
+            }, (array) $current_terms))),
             'content' => $public_content,
             'title' => $public_title,
             'units' => count($units),
@@ -554,6 +600,7 @@ class Lisun_Manual_V2_Runner {
 
         $repaired = 0;
         $unresolved = [];
+        $unresolved_unit_keys = [];
         foreach ($units as &$unit) {
             // Boundary-damaged units are not safe for automatic slot repair.
             // A term-count anomaly is only a warning, so it must not make a
@@ -573,12 +620,14 @@ class Lisun_Manual_V2_Runner {
                 if ($marker_count === 1) continue;
                 if ($marker_count > 1) {
                     $unresolved[] = self::slot_issue($unit, $occurrence, '术语槽位重复');
+                    $unresolved_unit_keys[] = (string) ($unit['unit_key'] ?? '');
                     continue;
                 }
 
                 $old_text = (string) ($old_by_id[$id]['translated_text'] ?? '');
                 if ($old_text === '') {
                     $unresolved[] = self::slot_issue($unit, $occurrence, '缺少历史译文');
+                    $unresolved_unit_keys[] = (string) ($unit['unit_key'] ?? '');
                     continue;
                 }
 
@@ -609,6 +658,7 @@ class Lisun_Manual_V2_Runner {
                         $occurrence,
                         $matches === 0 ? '找不到唯一的历史译文' : '历史译文出现多次，无法安全定位'
                     );
+                    $unresolved_unit_keys[] = (string) ($unit['unit_key'] ?? '');
                     continue;
                 }
                 $template = $selected;
@@ -623,7 +673,8 @@ class Lisun_Manual_V2_Runner {
             if (count($unresolved) > 5) $detail .= '；以及其他 ' . (count($unresolved) - 5) . ' 处';
             return new WP_Error(
                 'v2_glossary_slot_mismatch',
-                '术语应用未完成：发现 ' . count($unresolved) . ' 个无法唯一定位的术语槽位（' . $detail . '），未保存和推送'
+                '术语应用未完成：发现 ' . count($unresolved) . ' 个无法唯一定位的术语槽位（' . $detail . '），未保存和推送',
+                ['unit_keys' => array_values(array_unique(array_filter($unresolved_unit_keys)))]
             );
         }
 
@@ -905,6 +956,11 @@ class Lisun_Manual_V2_Runner {
             Lisun_Manual_V2_Materializer::MODE_SNAPSHOT
         );
         if (is_wp_error($public_content)) return $public_content;
+        // 2026-11-03：10 月 29 日的单元级媒体同步继续保留；这里再对最终组装后的
+        // 完整文档做一次确定性校验和同步。这样即使图片位于 skeleton，或历史
+        // target_template 没有进入 Planner 的复用分支，也不能把旧图推回远程站。
+        $public_content = self::sync_document_image_markup((string) $content, (string) $public_content);
+        if (is_wp_error($public_content)) return $public_content;
         $public_content = Lisun_Manual_Translate::repair_deepl_structural_boundaries(
             (string) $content,
             (string) $public_content
@@ -964,6 +1020,40 @@ class Lisun_Manual_V2_Runner {
             'term_anomaly_units' => count(self::term_anomaly_summary($ordered)),
             'term_anomalies' => self::term_anomaly_summary($ordered),
         ];
+    }
+
+    /**
+     * 2026-11-03：最终译文必须携带当前源文的图片标记。
+     * 只在数量完全一致时按顺序替换；数量不一致说明文档结构无法唯一对应，
+     * 此时明确停止，不能猜测图片应插入的位置。
+     */
+    private static function sync_document_image_markup($source_html, $translated_html) {
+        preg_match_all('/<img\b[^>]*>/is', (string) $source_html, $source_matches);
+        preg_match_all('/<img\b[^>]*>/is', (string) $translated_html, $target_matches);
+        $source_tags = array_values((array) ($source_matches[0] ?? []));
+        $target_tags = array_values((array) ($target_matches[0] ?? []));
+
+        if (count($source_tags) !== count($target_tags)) {
+            return new WP_Error(
+                'v2_image_count_mismatch',
+                'V2 最终译文图片数量与当前中文源文不一致，已停止保存和推送',
+                [
+                    'source_images' => count($source_tags),
+                    'translated_images' => count($target_tags),
+                ]
+            );
+        }
+        if (!$source_tags) return (string) $translated_html;
+
+        $index = 0;
+        $synced = preg_replace_callback(
+            '/<img\b[^>]*>/is',
+            static function ($match) use (&$index, $source_tags) {
+                return (string) ($source_tags[$index++] ?? $match[0]);
+            },
+            (string) $translated_html
+        );
+        return is_string($synced) ? $synced : (string) $translated_html;
     }
 
     /** Return paragraph-level glossary count mismatches for manual review. */

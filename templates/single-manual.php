@@ -409,6 +409,14 @@ if (!defined('ABSPATH')) {
         margin: 0 !important;
     }
 
+    /* 表格高度由内容自然撑开，不接受编辑器保存的固定 table/tr/cell 高度。 */
+    .lisun-manual-content table,
+    .lisun-manual-content table tr,
+    .lisun-manual-content table th,
+    .lisun-manual-content table td {
+        height: auto !important;
+    }
+
     /* 型号/编号表格：英文译文可能更长，首列允许换行，避免覆盖相邻列。 */
     .lisun-manual-content table.lisun-model-number-table,
     .lisun-manual-content table.lisun-two-column-table,
@@ -763,6 +771,16 @@ if (!defined('ABSPATH')) {
     </div>
 
     <!-- 正文+侧边栏容器 -->
+    <div class="lisun-print-header" aria-hidden="true">
+        <div class="lisun-print-brand">
+            <img src="<?php echo esc_url(defined('LISUN_MANUAL_URL') ? LISUN_MANUAL_URL . 'LISUN-LOGO_Original.jpg' : ''); ?>" alt="LISUN GROUP">
+            <span class="lisun-print-brand-divider"></span>
+            <span class="lisun-print-brand-copy">Testing Instruments &amp; Solutions<br>for EMC, Lighting, Electrical Safety and Environmental</span>
+            <span class="lisun-print-doc-type">TECHNICAL DOCUMENTATION</span>
+        </div>
+        <div class="lisun-print-rule"></div>
+    </div>
+
     <div class="lisun-manual-wrap">
         <!-- 侧边栏 -->
         <div class="lisun-manual-sidebar">
@@ -849,16 +867,13 @@ if (!defined('ABSPATH')) {
             </article>
 
             <?php
-            // 视频来源：产品CPT自动关联 + 后台手动添加
-            $product_no = get_post_meta(get_the_ID(), 'product-no', true);
-            $auto_videos = !empty($product_no) && class_exists('Lisun_Manual_Product_Video_Compat')
-                ? Lisun_Manual_Product_Video_Compat::get_by_model($product_no, $post_lang)
-                : [];
+            // 视频只读取后台已保存记录；产品页同步由后台任务完成，前台不再实时搜索或写入。
             $manual_videos = json_decode(get_post_meta(get_the_ID(), '_lisun_manual_videos', true), true) ?: [];
-            // 合并去重（按URL）
+            // 去重（按 URL）
             $seen_urls = [];
             $videos = [];
-            foreach (array_merge($auto_videos, $manual_videos) as $v) {
+            foreach ($manual_videos as $v) {
+                if (!is_array($v)) continue;
                 $vurl = $v['url'] ?? '';
                 // 归一化：去掉协议前缀再比较，避免 //xxx 和 https://xxx 被当作不同 URL
                 $vurl = preg_replace('#^https?:#', '', $vurl);
@@ -940,6 +955,11 @@ if (!defined('ABSPATH')) {
 
         </main>
     </div>
+
+    <footer class="lisun-print-footer" aria-hidden="true">
+        <span class="lisun-print-contact-web">www.lisungroup.com</span><i></i><span class="lisun-print-contact-mail">sales@lisungroup.com</span><i></i><span class="lisun-print-contact-phone">+86-21-5108 3341</span>
+        <b><span class="lisun-print-page-current"></span> / <span class="lisun-print-page-total"></span></b>
+    </footer>
 
     <?php get_footer(); ?>
 

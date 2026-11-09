@@ -67,6 +67,71 @@ class Lisun_Manual_Import {
         add_action('wp_ajax_lisun_import_status', [__CLASS__, 'ajax_import_status']);
         // AJAX: 在文章详情页手动生成 SEO
         add_action('wp_ajax_lisun_generate_manual_seo', [__CLASS__, 'ajax_generate_manual_seo']);
+
+        // 产品页保存后异步刷新所有关联说明书的视频；说明书保存/导入时也立即校准。
+        add_action('save_post_products', [__CLASS__, 'queue_product_video_sync'], 20, 3);
+        // 必须在型号框、媒体框以及其他插件的保存回调之后运行，避免首次同步结果被空表单覆盖。
+        add_action('save_post_manual', [__CLASS__, 'sync_manual_videos_after_save'], 999, 3);
+        add_action('lisun_sync_product_videos_event', [__CLASS__, 'sync_product_videos_for_manual'], 10, 1);
+        add_action('lisun_sync_all_product_videos_event', [__CLASS__, 'sync_all_product_videos'], 10, 0);
+        add_action('lisun_sync_all_product_videos_once_event', [__CLASS__, 'sync_all_product_videos'], 10, 0);
+        add_action('init', [__CLASS__, 'ensure_product_video_cron']);
+    }
+
+    /** 产品保存后排队处理，避免阻塞产品编辑请求。 */
+    public static function queue_product_video_sync($post_id, $post = null, $update = false) {
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+        if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) return;
+        if (get_post_status($post_id) !== 'publish') return;
+        // 每日任务本身长期存在，不能用它判断“是否已经排过一次即时同步”。
+        if (!wp_next_scheduled('lisun_sync_all_product_videos_once_event')) {
+            wp_schedule_single_event(time() + 5, 'lisun_sync_all_product_videos_once_event');
+        }
+    }
+
+    /** 每日自动校准一次，覆盖批量导入或直接修改数据库等场景。 */
+    public static function ensure_product_video_cron() {
+        $initial_sync_needed = !get_option('lisun_manual_product_video_initial_sync_queued');
+        if ($initial_sync_needed) {
+            update_option('lisun_manual_product_video_initial_sync_queued', current_time('mysql'), false);
+            // 先排一次历史数据回填，再建立每日任务；不能用同一个 next_scheduled 判断替代两者。
+            if (!wp_next_scheduled('lisun_sync_all_product_videos_once_event')) {
+                wp_schedule_single_event(time() + 10, 'lisun_sync_all_product_videos_once_event');
+            }
+        }
+        $scheduled = function_exists('wp_get_scheduled_event')
+            ? wp_get_scheduled_event('lisun_sync_all_product_videos_event')
+            : null;
+        if (!$scheduled || empty($scheduled->schedule) || $scheduled->schedule !== 'daily') {
+            wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'lisun_sync_all_product_videos_event');
+        }
+    }
+
+    public static function sync_manual_videos_after_save($post_id, $post = null, $update = false) {
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+        if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) return;
+        if (!empty($_POST['lisun_sync_product_videos_now'])) {
+            Lisun_Manual_Product_Video_Compat::clear_cache();
+        }
+        self::sync_videos_from_product($post_id);
+    }
+
+    /** 定时任务：同步全部说明书，前台不再承担实时搜索和写入。 */
+    public static function sync_all_product_videos() {
+        $ids = get_posts([
+            'post_type' => 'manual',
+            'post_status' => ['publish', 'draft', 'private'],
+            'posts_per_page' => -1,
+            'fields' => 'ids',
+            'no_found_rows' => true,
+        ]);
+        foreach ((array) $ids as $post_id) {
+            self::sync_videos_from_product((int) $post_id);
+        }
+    }
+
+    public static function sync_product_videos_for_manual($post_id) {
+        self::sync_videos_from_product((int) $post_id);
     }
 
     /**
@@ -1632,27 +1697,80 @@ class Lisun_Manual_Import {
     }
 
     /**
-     * 根据 product-no 从 products CPT 同步操作视频到 _lisun_manual_videos
-     *
-     * 视频数据来自 products 帖子的 ACF repeater 字段 product-video，
-     * 通过 lisun_get_product_videos_by_model() 查找匹配。
-     * 已有手动视频则不覆盖。
+     * 根据 product-no 同步操作视频到说明书后台。
+     * 产品来源视频可自动更新；手动视频和人工覆盖的视频不被覆盖。
      */
     private static function sync_videos_from_product($post_id) {
         $product_no = get_post_meta($post_id, 'product-no', true);
-        if (empty($product_no)) return;
+        // product-no 允许保存多个型号，例如：
+        // LPCE-2(LMS-9000C), LPCE-2(LMS-9000)
+        // 必须逐个型号查询；把整串交给产品表精确匹配会永远返回空。
+        $product_models = preg_split('/[,，;；\r\n]+/u', (string) $product_no, -1, PREG_SPLIT_NO_EMPTY);
+        $product_models = array_values(array_unique(array_filter(array_map('trim', (array) $product_models))));
+        $videos = [];
+        foreach ($product_models as $product_model) {
+            foreach ((array) Lisun_Manual_Product_Video_Compat::get_by_model($product_model) as $product_video) {
+                if (!is_array($product_video)) continue;
+                $product_video['source_model'] = $product_model;
+                $videos[] = $product_video;
+            }
+        }
+        $existing = json_decode((string) get_post_meta($post_id, '_lisun_manual_videos', true), true);
+        $existing = is_array($existing) ? $existing : [];
+        $suppressed = json_decode((string) get_post_meta($post_id, '_lisun_manual_video_suppressions', true), true);
+        $suppressed = is_array($suppressed) ? $suppressed : [];
 
-        // 已有人工设置的视频则跳过
-        $existing = get_post_meta($post_id, '_lisun_manual_videos', true);
-        if (!empty($existing) && $existing !== '[]') return;
+        // 没有 source 的旧记录按人工记录处理，避免自动同步误删历史人工内容。
+        $manual = [];
+        $manual_override_urls = [];
+        foreach ($existing as $item) {
+            if (!is_array($item) || empty($item['url'])) continue;
+            if (($item['source'] ?? '') === 'product') continue;
+            $item['source'] = in_array(($item['source'] ?? ''), ['manual_override', 'manual'], true)
+                ? $item['source']
+                : 'manual';
+            if ($item['source'] === 'manual_override' && !empty($item['original_url'])) {
+                $manual_override_urls[(string) $item['original_url']] = true;
+            }
+            $manual[] = $item;
+        }
 
-        $videos = Lisun_Manual_Product_Video_Compat::get_by_model($product_no);
-        if (empty($videos)) return;
+        $auto = [];
+        foreach ((array) $videos as $video) {
+            if (empty($video['url'])) continue;
+            $url = esc_url_raw($video['url']);
+            $original_url = (string) ($video['url'] ?? $url);
+            // 删除或人工覆盖的产品行由后台记录保护，不被自动任务悄悄恢复/重复添加。
+            if (isset($suppressed[$original_url]) || isset($suppressed[$url])) continue;
+            if (isset($manual_override_urls[$original_url]) || isset($manual_override_urls[$url])) continue;
+            $auto[] = [
+                'name' => (string) ($video['name'] ?? 'Operation Video'),
+                'url' => $url,
+                'video_type' => 'operation',
+                'source' => 'product',
+                'source_model' => (string) ($video['source_model'] ?? $product_no),
+                'original_url' => $original_url,
+                'original_name' => (string) ($video['name'] ?? 'Operation Video'),
+            ];
+        }
 
-        update_post_meta($post_id, '_lisun_manual_videos',
-            wp_json_encode($videos, JSON_UNESCAPED_UNICODE));
+        // 最终按 URL 去重，人工覆盖优先于产品自动记录。
+        $next = [];
+        $seen = [];
+        foreach (array_merge($manual, $auto) as $item) {
+            $key = preg_replace('#^https?:#', '', (string) ($item['url'] ?? ''));
+            if ($key === '' || isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $next[] = $item;
+        }
+        $old_json = wp_json_encode($existing, JSON_UNESCAPED_UNICODE);
+        $new_json = wp_json_encode($next, JSON_UNESCAPED_UNICODE);
+        if ($old_json !== $new_json || !metadata_exists('post', $post_id, '_lisun_manual_videos')) {
+            update_post_meta($post_id, '_lisun_manual_videos', $new_json);
+        }
+        update_post_meta($post_id, '_lisun_manual_videos_synced_at', current_time('mysql'));
 
-        error_log("LISUN Manual: synced " . count($videos) . " video(s) from product CPT for post {$post_id} (model: {$product_no})");
+        error_log("LISUN Manual: synced " . count($auto) . " product operation video(s) for post {$post_id} (model: {$product_no})");
     }
 
     /**
