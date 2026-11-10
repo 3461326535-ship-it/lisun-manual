@@ -26,7 +26,7 @@ if (count($valid_docs) !== count($uploaded_docs)) {
 
     <h2><?php _e('执行导入', 'lisun-manual'); ?></h2>
     <p class="description">
-        <?php _e('预览解析结果，确认无误后执行导入。导入后的页面将保存为草稿，您可以在编辑器中进一步调整。', 'lisun-manual'); ?>
+        <?php _e('每篇文件可按产品型号或标题搜索并指定替换目标；未指定的文件会新建。替换无需预览。', 'lisun-manual'); ?>
     </p>
 
     <!-- 文件选择 -->
@@ -45,7 +45,7 @@ if (count($valid_docs) !== count($uploaded_docs)) {
                     <th width="30"><input type="checkbox" id="lisun-select-all" checked></th>
                     <th><?php _e('文件名', 'lisun-manual'); ?></th>
                     <th width="120"><?php _e('上传时间', 'lisun-manual'); ?></th>
-                    <th width="150"><?php _e('操作', 'lisun-manual'); ?></th>
+                    <th width="320"><?php _e('操作 / 替换目标', 'lisun-manual'); ?></th>
                 </tr>
             </thead>
             <tbody>
@@ -60,6 +60,8 @@ if (count($valid_docs) !== count($uploaded_docs)) {
                             data-filename="<?php echo esc_attr(pathinfo($doc['filename'], PATHINFO_FILENAME)); ?>">
                             <?php _e('预览', 'lisun-manual'); ?>
                         </button>
+                        <button type="button" class="button button-small lisun-replace-doc" data-stored="<?php echo esc_attr($stored_name); ?>">指定替换目标</button>
+                        <div class="lisun-row-target" style="margin-top:5px;color:#646970;">未指定：新建文章</div>
                     </td>
                 </tr>
                 <?php endforeach; ?>
@@ -81,10 +83,27 @@ if (count($valid_docs) !== count($uploaded_docs)) {
         </div>
     </div>
 
-    <!-- 一键全部导入（无需预览） -->
+    <!-- [修改时间：2026-11-05 12:09:00 +08:00] 替换入口独立于解析预览，仍须核对旧文章。 -->
+    <div id="lisun-replace-section" style="display:none; margin-top:20px;">
+        <h3>替换现有说明书</h3>
+        <p id="lisun-replace-source"></p>
+        <div class="postbox" style="padding:12px;margin-top:15px;max-width:850px;">
+            <div id="lisun-replace-fields" style="margin-top:12px;">
+                <label for="lisun-replace-search">产品型号 / 标题关键词 / ID：</label>
+                <input type="search" id="lisun-replace-search" class="regular-text" placeholder="输入产品型号或标题中的词">
+                <button type="button" class="button" id="lisun-search-replace-targets">搜索</button>
+                <div id="lisun-replace-matches" style="margin-top:10px;"></div>
+                <div id="lisun-replace-target" style="margin-top:10px;"></div>
+                <button type="button" class="button" id="lisun-clear-replace-target" style="display:none;">取消这篇的替换指定</button>
+                <p class="description">仅替换正文和原 DOCX。旧标题、链接、SEO、标签、发布状态及远程绑定保持原值；替换前保存可撤回快照。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- [修改时间：2026-11-05 13:04:00 +08:00] 批量按文件行指定的新建或替换操作执行。 -->
     <div id="lisun-batch-import-section" style="margin-top: 20px;">
         <button type="button" class="button button-primary button-hero" id="lisun-batch-import">
-            <?php _e('一键全部导入（跳过预览）', 'lisun-manual'); ?>
+            <?php _e('导入所选文件（按各行指定新建或替换）', 'lisun-manual'); ?>
         </button>
         <span class="spinner" style="float:none;margin-top:8px;"></span>
         <span id="lisun-batch-progress" style="margin-left:10px;font-weight:600;"></span>

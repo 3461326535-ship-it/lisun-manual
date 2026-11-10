@@ -856,6 +856,9 @@ class Lisun_Manual_V2_Runner {
             . ' units=' . count($units)
             . ' pending=' . count($pending)
             . ' reused=' . $reuse_count
+            // [修改时间：2026-11-05 11:10:48 +08:00] 记录因术语完全缺失而强制重译的单元，便于对照 trace。
+            . ' recovery=' . count((array) ($plan['recovery_unit_keys'] ?? []))
+            . ' recovery_keys=' . wp_json_encode((array) ($plan['recovery_unit_keys'] ?? []))
             . ' force=' . ($force ? 'yes' : 'no'));
 
         $adapter = self::make_translation_adapter($current_terms);

@@ -1091,7 +1091,7 @@ jQuery(function ($) {
         if (!rows.length && !unanchored.length) return '';
         var title = rows.length
             ? (hardVisibleFailure
-                ? '应用失败：英文译文中未发现目标术语，需重新增量翻译'
+                ? '术语应用未完成：对应英文段落未使用目标译法，需重新处理'
                 : (termCountWarning
                 ? '术语数量提示：' + rows.length + ' 处需人工核对'
                 : (item.status === 'incomplete' ? '英文译文仍缺 ' : (audit.resolved ? '已通过增量处理 ' : '待处理 ')) + rows.length + ' 处'))
@@ -1188,10 +1188,10 @@ jQuery(function ($) {
                     (selectable ? '<input type="checkbox" class="lisun-impact-check" data-post-id="' + escAttr(item.post_id) + '" title="勾选后可批量应用到这篇" ' + (selectedPostIds[item.post_id] ? 'checked' : '') + '>' : '') +
                     '<span class="lisun-impact-article-title"><strong>#' + escHtml(item.post_id) + '</strong>' + escHtml(item.title || '') + '</span>' +
                     '<span class="lisun-impact-badges">' +
-                        '<span class="lisun-impact-badge' + modeClass + '">' + escHtml(applied ? '已应用' : (hardVisibleFailure ? '应用失败' : (incomplete ? '增量翻译未完成' : (localOnly ? modeLabels.local_only : (modeLabels[item.mode] || item.mode || ''))))) + ' · ' + escHtml(countText) + '</span>' +
+                        '<span class="lisun-impact-badge' + modeClass + '">' + escHtml(applied ? '已应用' : (hardVisibleFailure ? '术语应用未完成' : (incomplete ? '增量翻译未完成' : (localOnly ? modeLabels.local_only : (modeLabels[item.mode] || item.mode || ''))))) + ' · ' + escHtml(countText) + '</span>' +
                         '<span class="lisun-impact-badge">命中 ' + hitCount + ' 处</span>' +
                         (hasVisibleAudit && stableAnchorCount < hitCount ? '<span class="lisun-impact-badge is-warning">稳定锚点 ' + stableAnchorCount + '/' + hitCount + ' 处</span>' : '') +
-                        (hardVisibleFailure ? '<span class="lisun-impact-badge is-warning">应用失败：需重新增量翻译</span>' : (termWarningCount ? '<span class="lisun-impact-badge is-warning">术语数量提示：少 ' + termWarningCount + ' 处（仅供核对）</span>' : '')) +
+                        (hardVisibleFailure ? '<span class="lisun-impact-badge is-warning">目标译法未落实，需重新处理</span>' : (termWarningCount ? '<span class="lisun-impact-badge is-warning">术语数量提示：少 ' + termWarningCount + ' 处（仅供核对）</span>' : '')) +
                         (termAnomalyCount ? '<span class="lisun-impact-badge is-warning">术语表异常 ' + termAnomalyCount + ' 个段落</span>' : '') +
                         (!applied && !hasVisibleAudit && appliedHitCount && unappliedCount ? '<span class="lisun-impact-badge is-applied">已应用 ' + appliedHitCount + ' 处</span>' : '') +
                         (processCount ? '<span class="lisun-impact-badge is-warning">' + processLabel + processCount + ' 处</span>' : '') +
