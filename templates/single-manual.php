@@ -855,6 +855,11 @@ if (!defined('ABSPATH')) {
         $is_en ? '20.7pt' : '18pt',
         $is_en ? '13.84mm' : '14.13mm'
     );
+    /* 2026-11-10 页脚网址按语言切换：英文 .com / 中文 .cn；邮箱、电话不变。 */
+    printf(
+        '<style>@page{@bottom-left{content:"%s"}}</style>',
+        $is_en ? 'https://www.Lisungroup.com' : 'https://www.Lisungroup.cn'
+    );
     ?>
     <div class="out_wrap breadcrumb_info">
         <div class="content_wrap">

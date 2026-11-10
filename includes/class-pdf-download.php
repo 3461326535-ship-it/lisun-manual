@@ -28,9 +28,18 @@ class Lisun_Manual_Pdf_Download {
        LISUN_MANUAL_CHROME_BIN 常量覆盖，或 filter lisun_manual_chrome_bin。
        取用请走 self::chrome_bin()，不要再直接引用本常量。 */
     const CHROME_DEFAULT = '/opt/lisun-pdf-poc/chrome-headless-shell-linux64/chrome-headless-shell';
+    /* 2026-11-10 渲染提速：主题全局加载的第三方统计/营销脚本（百度统计、360、
+       百度爱番番等）对 PDF 内容无用，却会让 chrome 干等 load 事件（首生成约 9s→6s）。
+       渲染时把这些域解析到 0.0.0.0 使其快速失败；站点可经 filter lisun_manual_chrome_block_hosts 覆盖。 */
+    const BLOCK_HOSTS = [
+        'hm.baidu.com',                // 百度统计
+        'banti-static.cdn.bcebos.com', // 百度爱番番/商桥
+        'jspassport.ssl.qhimg.com',    // 360 安全卫士
+        's.ssl.qhres2.com',            // 360 静态资源
+    ];
     /* 2026-11-09 缓存版本：生成逻辑变化时 +1，旧缓存自动失效。
        v2 = 加入 PDF 书签（--generate-pdf-document-outline） */
-    const CACHE_VER  = 3;   // v3 = 附录软件链接改锚文本
+    const CACHE_VER  = 4;   // v4 = 渲染时屏蔽第三方统计脚本（内容更完整）
     /* 2026-11-09 全局排队：同时只允许 1 份生成（单份峰值约 1GB），
        排队等待上限（秒），超时直接失败并让前端提示重试 */
     const GEN_WAIT   = 90;
@@ -73,6 +82,11 @@ class Lisun_Manual_Pdf_Download {
             return (string) LISUN_MANUAL_CHROME_BIN;
         }
         return (string) apply_filters('lisun_manual_chrome_bin', self::CHROME_DEFAULT);
+    }
+
+    /** 渲染时屏蔽的第三方域名（统计/营销脚本，对 PDF 无用），可经 filter 覆盖 */
+    private static function blocked_hosts() {
+        return (array) apply_filters('lisun_manual_chrome_block_hosts', self::BLOCK_HOSTS);
     }
 
     public static function init() {
@@ -234,6 +248,15 @@ class Lisun_Manual_Pdf_Download {
         $profile   = sys_get_temp_dir() . '/lisun-chrome-' . getmypid();
         $render    = add_query_arg([self::Q_RENDER => '1', self::Q_TOKEN => $token], $permalink);
 
+        /* 2026-11-10 渲染提速：本站走本机 127.0.0.1（绕过 CDN/公网），
+           第三方统计脚本解析到 0.0.0.0 快速失败，避免拖慢 load 事件。 */
+        $resolve = ['MAP ' . $host . ' 127.0.0.1'];
+        foreach (self::blocked_hosts() as $blocked) {
+            if (is_string($blocked) && $blocked !== '' && $blocked !== $host) {
+                $resolve[] = 'MAP ' . $blocked . ' 0.0.0.0';
+            }
+        }
+
         $cmd = escapeshellarg($chrome)
             . ' --headless --no-sandbox --disable-dev-shm-usage --hide-scrollbars'
             . ' --no-pdf-header-footer --run-all-compositor-stages-before-draw'
@@ -241,7 +264,7 @@ class Lisun_Manual_Pdf_Download {
                低版本 chrome 忽略该开关，不影响生成 */
             . ' --generate-pdf-document-outline'
             . ' --user-data-dir=' . escapeshellarg($profile)
-            . ' --host-resolver-rules=' . escapeshellarg('MAP ' . $host . ' 127.0.0.1')
+            . ' --host-resolver-rules=' . escapeshellarg(implode(', ', $resolve))
             . ' --ignore-certificate-errors'
             . ' --print-to-pdf=' . escapeshellarg($tmp)
             . ' ' . escapeshellarg($render)
