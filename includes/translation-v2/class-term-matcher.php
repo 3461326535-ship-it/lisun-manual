@@ -120,22 +120,18 @@ class Lisun_Manual_V2_Term_Matcher {
             }, $text);
         }
 
-        // Glossary values are often entered with an initial capital merely
-        // because they are shown as standalone labels. In prose, normalize
-        // ordinary English words to sentence case. Deliberate acronyms and
-        // internal mixed-case product/brand names remain byte-identical.
-        $normalized = preg_replace_callback('/\b[A-Za-z][A-Za-z\x{2019}\'-]*\b/u', function ($match) {
-            $word = $match[0];
-            if (self::preserve_word_case($word)) return $word;
-            return strtolower($word);
-        }, $text);
+        // [修改时间：2026-11-16 15:40:00 +08:00]
+        // 旧逻辑在 body 上下文里把所有普通单词强制小写，导致 "Chinese English"
+        // 变成 "Chinese english"、"LISUN Manual" 变成 "Lisun manual"，
+        // 专有名词和产品名全部被破坏。术语表里的英文大小写是人工确认过的，
+        // 句中不应再改写；这里只负责句首补一个大写字母。
+        if ($context !== 'sentence_start') return $text;
 
-        if ($context !== 'sentence_start') return $normalized;
         return preg_replace_callback('/\b[A-Za-z][A-Za-z\x{2019}\'-]*\b/u', static function ($match) {
             $word = $match[0];
             if (self::preserve_word_case($word)) return $word;
             return strtoupper(substr($word, 0, 1)) . substr($word, 1);
-        }, $normalized, 1);
+        }, $text, 1);
     }
 
     /** Resolve one occurrence as heading, sentence start, or ordinary body text. */

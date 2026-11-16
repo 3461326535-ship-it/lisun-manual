@@ -805,6 +805,29 @@ class Lisun_Manual_V2_Runner {
         return trim((string) preg_replace('/\s+/u', ' ', (string) $text));
     }
 
+    /**
+     * [修改时间：2026-11-16 15:40:00 +08:00]
+     * 判断一个翻译单元是否本来就是英文（整段没有汉字）。
+     *
+     * 只在高置信度时返回 true：去掉 HTML 标签后不含任何汉字、中文标点或
+     * 全角字符，且至少有一个两字母以上的英文单词。这类单元不需要翻译，
+     * 直接沿用源文，保证本来就写好的英文一个字符都不被改动。
+     */
+    private static function is_already_english_unit($unit) {
+        $text = html_entity_decode(
+            wp_strip_all_tags((string) ($unit['source_text'] ?? '')),
+            ENT_QUOTES | ENT_HTML5,
+            'UTF-8'
+        );
+        $text = trim((string) preg_replace('/\s+/u', ' ', $text));
+        if ($text === '') return false;
+        if (preg_match('/[\x{3000}-\x{303f}\x{3400}-\x{4dbf}\x{4e00}-\x{9fff}\x{f900}-\x{faff}\x{ff00}-\x{ffef}]/u', $text)) {
+            return false;
+        }
+        // 至少要有一个真正的英文单词，避免把 "1.0"、"≤4Ω" 这类纯符号单元当成英文。
+        return (bool) preg_match('/[A-Za-z]{2,}/', $text);
+    }
+
     public static function translate_document($post_id, $content, $title, $force = false, $force_unit_keys = []) {
         Lisun_Manual_V2_Schema::maybe_upgrade();
         self::progress($post_id, 'extracting', 8, '正在提取翻译单元…');
@@ -862,6 +885,39 @@ class Lisun_Manual_V2_Runner {
             . ' force=' . ($force ? 'yes' : 'no'));
 
         $adapter = self::make_translation_adapter($current_terms);
+
+        // [修改时间：2026-11-16 16:55:00 +08:00]
+        // 对应 bug「中文说明书里本来就是英文的内容，翻成英文时不要改动」。
+        // 说明书里有些单元整段都是英文（例如 EMC 标准名 "Electromagnetic
+        // compatibility (EMC) – Part 4-3…"、重量列表 "100g, 200g, …"），
+        // 这些内容再送一次翻译只会被改写或重新断句，没有任何收益。
+        // 这里只跳过“整单元不含汉字”的片段，直接按源文还原，保证一个字符不变。
+        //
+        // 注意：本改动**不涉及**「积分球 → Integrating Sphères」那个 bug。
+        // 该问题是翻译引擎自身的词形行为（详见 PR 说明，标记为 won't fix），
+        // 插件侧不做逐词纠正。
+        $english_only = [];
+        $pending_all = $pending;
+        $pending = [];
+        foreach ($pending_all as $prepared_unit) {
+            if (self::is_already_english_unit($prepared_unit['unit'] ?? [])) {
+                $restored = Lisun_Manual_V2_Unit_Transport::restore(
+                    $prepared_unit,
+                    (string) ($prepared_unit['xml'] ?? '')
+                );
+                if (!is_wp_error($restored)) {
+                    $english_only[$prepared_unit['unit']['unit_key']] = $restored;
+                    continue;
+                }
+            }
+            $pending[] = $prepared_unit;
+        }
+        if ($english_only) {
+            self::log('V2 keep-source-english post=' . (int) $post_id
+                . ' units=' . count($english_only)
+                . ' keys=' . wp_json_encode(array_keys($english_only)));
+        }
+
         if (!empty($pending)) {
             $total_pending = count($pending);
             self::progress($post_id, 'translating', 25,
@@ -881,26 +937,29 @@ class Lisun_Manual_V2_Runner {
                     ]);
             });
             if (is_wp_error($translated)) return $translated;
-            foreach ($pending as $prepared) {
-                $key = $prepared['unit']['unit_key'];
-                if (!isset($translated[$key])) {
-                    return new WP_Error('v2_missing_unit', 'V2 翻译结果缺少完整单元');
-                }
-                $unit = $prepared['unit'];
-                $unit['target_template'] = $translated[$key]['target_template'];
-                $unit['occurrence_signature'] = $prepared['occurrence_signature'];
-                $unit['occurrences'] = $translated[$key]['occurrences'];
-                $unit['lock_state'] = 'auto';
-                $unit['status'] = ($translated[$key]['anchor_status'] ?? 'complete') === 'degraded'
-                    ? 'degraded'
-                    : 'translated';
-                $translated_units[$key] = $unit;
-            }
         } else {
+            $translated = [];
             self::progress($post_id, 'translating', 75, '待翻译单元已全部复用，正在整理译文…', [
                 'completed_units' => 0,
                 'total_units' => 0,
             ]);
+        }
+
+        foreach ($pending_all as $prepared_unit) {
+            $key = $prepared_unit['unit']['unit_key'];
+            $result = $translated[$key] ?? $english_only[$key] ?? null;
+            if ($result === null) {
+                return new WP_Error('v2_missing_unit', 'V2 翻译结果缺少完整单元');
+            }
+            $unit = $prepared_unit['unit'];
+            $unit['target_template'] = $result['target_template'];
+            $unit['occurrence_signature'] = $prepared_unit['occurrence_signature'];
+            $unit['occurrences'] = $result['occurrences'];
+            $unit['lock_state'] = 'auto';
+            $unit['status'] = ($result['anchor_status'] ?? 'complete') === 'degraded'
+                ? 'degraded'
+                : 'translated';
+            $translated_units[$key] = $unit;
         }
 
         usort($units, function ($a, $b) {

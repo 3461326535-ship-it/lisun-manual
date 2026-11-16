@@ -69,6 +69,11 @@ class Lisun_Manual_V2_Unit_Transport {
                                 $format_map[$id] = ['kind' => 'raw', 'raw' => $text_piece];
                                 $xml .= '<ph id="' . $id . '" />';
                             } else {
+                                // [修改时间：2026-11-16 15:40:00 +08:00]
+                                // 数字之间的中文逗号（48，100 / 1.0，1.2）送翻后
+                                // 常被当成标点吞掉，输出成 "48100"。这里先统一
+                                // 成英文逗号加空格，让数字序列在译文里保持分隔。
+                                $text_piece = preg_replace('/(?<=\d)，(?=\d)/u', ', ', $text_piece);
                                 $xml .= self::xml($text_piece);
                             }
                             $last_was_term = false;
