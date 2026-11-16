@@ -15,7 +15,53 @@ if (!defined('ABSPATH')) {
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
     <meta http-equiv="X-UA-Compatible" content="IE=edge,Chrome=1">
     <link rel="shortcut icon" href="<?php echo esc_url(get_template_directory_uri()); ?>/img/favicon.ico">
-    <title><?php if(function_exists('get_field') && get_field('title')){the_field('title');}else{wp_title('');} echo ' - ' . get_bloginfo('name'); ?></title>
+    <?php
+    // [修改时间：2026-11-17 02:35:00 +08:00]
+    // 详情页 SEO 标题（<head> 里的 <title>，即浏览器标签与搜索结果标题）统一为
+    // 「产品名 - User's Manual - LISUN」，中文站为「产品名 - 操作使用说明书 - LISUN」。
+    //
+    // 只影响 <title>；页面内可见的 H1 由下面的 $clean_title 输出，不受此改动影响。
+    //
+    // 产品名取文章标题（如「紫外老化试验箱（台式）」），不取 ACF 的 title 字段：
+    // 后者是较长的推广用语，部分条目本身已含「操作说明书」或品牌名
+    // （467 条里 42 条含「操作说明书」、104 条含「使用说明书」），
+    // 直接拼后缀会出现「…操作说明书 - 操作使用说明书 - LISUN」这种重复。
+    $lisun_title_post_id = get_queried_object_id();
+    if (!$lisun_title_post_id) {
+        $lisun_title_post_id = get_the_ID();
+    }
+    if (!$lisun_title_post_id && isset($GLOBALS['post']) && $GLOBALS['post'] instanceof WP_Post) {
+        $lisun_title_post_id = (int) $GLOBALS['post']->ID;
+    }
+    $lisun_title_post_lang = get_post_meta($lisun_title_post_id, '_lisun_manual_lang', true);
+    $lisun_title_site_lang = get_option('lisun_page_lang', '');
+    $lisun_title_lang = in_array($lisun_title_post_lang, ['zh', 'en'], true)
+        ? $lisun_title_post_lang
+        : (in_array($lisun_title_site_lang, ['zh', 'en'], true) ? $lisun_title_site_lang : 'zh');
+    $lisun_raw_name = trim(wp_strip_all_tags((string) get_the_title($lisun_title_post_id)));
+    if ($lisun_raw_name === '' && function_exists('get_field')) {
+        $lisun_raw_name = trim(wp_strip_all_tags((string) get_field('title', $lisun_title_post_id)));
+    }
+    if ($lisun_raw_name === '') {
+        $lisun_raw_name = trim(wp_title('', false));
+    }
+    // 去掉尾部已经存在的「说明书」类词和后缀品牌名，避免拼接重复。
+    $lisun_product_name = preg_replace(
+        '/[\s\-–—|,，]*(操作使用说明书|操作说明书|使用说明书|说明书|user\'?s?\s+manual|manual)\s*$/iu',
+        '',
+        $lisun_raw_name
+    );
+    $lisun_product_name = preg_replace('/\s*[-–—|]\s*(LISUN|力汕).*$/iu', '', (string) $lisun_product_name);
+    $lisun_product_name = trim((string) $lisun_product_name);
+    // 若清理后什么都不剩（标题本身就只有「操作使用说明书」这类词），回退原名，
+    // 至少不要产出一个只有后缀的标题。
+    if ($lisun_product_name === '') {
+        $lisun_product_name = $lisun_raw_name;
+    }
+    $lisun_page_title = ($lisun_product_name !== '' ? $lisun_product_name . ' - ' : '')
+        . ($lisun_title_lang === 'en' ? "User's Manual - LISUN" : '操作使用说明书 - LISUN');
+    ?>
+    <title><?php echo esc_html($lisun_page_title); ?></title>
     <meta name="description" content="<?php echo function_exists('get_field') ? get_field('description') : ''; ?>">
     <meta name="keywords" content="<?php echo function_exists('get_field') ? get_field('keywords') : ''; ?>">
     <link rel="stylesheet" href="<?php echo esc_url(get_template_directory_uri()); ?>/css/cases-s.css" type="text/css" media="all" />
