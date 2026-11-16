@@ -92,6 +92,9 @@ class Lisun_Manual_Pdf_Download {
     public static function init() {
         add_action('template_redirect', [__CLASS__, 'maybe_render_page'], 0);
         add_action('template_redirect', [__CLASS__, 'maybe_download'], 2);
+
+        /* 2026-11-10 后台预热：内容更新即废弃旧缓存，交给 cron 预热在后台重新生成 */
+        add_action('save_post_manual', [__CLASS__, 'on_manual_saved'], 20, 3);
     }
 
     /* ---------------- chrome 渲染通道 ---------------- */
@@ -162,21 +165,15 @@ class Lisun_Manual_Pdf_Download {
     /* ---------------- 生成与缓存 ---------------- */
 
     private static function ensure_pdf($post_id, $token) {
-        $uploads = wp_upload_dir();
-        $dir     = trailingslashit($uploads['basedir']) . 'lisun-pdf';
-        if (!wp_mkdir_p($dir)) {
+        $dir = self::cache_dir();
+        if ($dir === '') {
             return false;
         }
-        // 禁止从 Web 直接访问缓存目录
-        $ht = $dir . '/.htaccess';
-        if (!file_exists($ht)) {
-            @file_put_contents($ht, "Require all denied\nDeny from all\n");
+        $file = self::cache_file_for($post_id);
+        if ($file === '') {
+            return false;
         }
-
-        $lang  = (string) get_post_meta($post_id, '_lisun_manual_lang', true);
-        $key   = md5($post_id . '|' . $lang . '|' . home_url() . '|v' . self::CACHE_VER);
-        $file  = $dir . '/' . (int) $post_id . '-' . $key . '.pdf';
-        $fresh = (int) get_post_modified_time('U', true);
+        $fresh = (int) get_post_modified_time('U', true, $post_id);
 
         if (file_exists($file) && filemtime($file) >= $fresh) {
             return $file;
@@ -321,5 +318,120 @@ class Lisun_Manual_Pdf_Download {
         header('X-Content-Type-Options: nosniff');
         readfile($file);
         exit;
+    }
+
+    /* ---------------- 后台预热（2026-11-10 新增） ---------------- */
+
+    /**
+     * 后台预热：找出还没有新鲜缓存 PDF 的手册，逐篇生成。
+     * 由系统 cron（空闲时段）调用，前台点击时直接命中缓存，避免首次 10–30 秒的跨洋拉图。
+     * 每次只生成少量（默认 2 篇），配合 generate() 里的全局锁串行，避免打满内存。
+     *
+     * @param int $limit 本次最多生成篇数
+     * @return array ['generated'=>int,'failed'=>int,'remaining'=>int]
+     */
+    public static function prewarm($limit = 2) {
+        $out   = ['generated' => 0, 'failed' => 0, 'remaining' => 0];
+        $stale = self::stale_post_ids(500);
+        foreach (array_slice($stale, 0, (int) $limit) as $post_id) {
+            // 模拟下载流程里的令牌签发：chrome 渲染时靠它（且仅限本机）摘掉密码门
+            $token = wp_generate_password(40, false, false);
+            set_transient('lisun_pdf_t_' . md5($token), ['pid' => (int) $post_id], self::TOKEN_TTL);
+            $file = self::ensure_pdf((int) $post_id, $token);
+            delete_transient('lisun_pdf_t_' . md5($token));
+            if ($file) {
+                $out['generated']++;
+            } else {
+                $out['failed']++;
+            }
+        }
+        $out['remaining'] = max(0, count($stale) - (int) $limit);
+        return $out;
+    }
+
+    /** 已发布且还没有新鲜缓存 PDF 的手册 ID（按更新时间倒序，优先最新改动的） */
+    private static function stale_post_ids($limit) {
+        $q = new WP_Query([
+            'post_type'      => 'manual',
+            'post_status'    => 'publish',
+            'posts_per_page' => 500,
+            'orderby'        => 'modified',
+            'order'          => 'DESC',
+            'fields'         => 'ids',
+            'no_found_rows'  => true,
+        ]);
+        $ids = [];
+        foreach ((array) $q->posts as $pid) {
+            if (!self::has_fresh_pdf((int) $pid)) {
+                $ids[] = (int) $pid;
+            }
+            if (count($ids) >= (int) $limit) {
+                break;
+            }
+        }
+        return $ids;
+    }
+
+    /** 缓存目录（不存在则创建并写 .htaccess 拒绝直连；失败返回 ''） */
+    private static function cache_dir() {
+        $uploads = wp_upload_dir();
+        $dir     = trailingslashit($uploads['basedir']) . 'lisun-pdf';
+        if (!wp_mkdir_p($dir)) {
+            return '';
+        }
+        $ht = $dir . '/.htaccess';
+        if (!file_exists($ht)) {
+            @file_put_contents($ht, "Require all denied\nDeny from all\n");
+        }
+        return $dir;
+    }
+
+    /** 某篇文章的缓存 PDF 路径（含版本号，生成逻辑变化时整体失效） */
+    private static function cache_file_for($post_id) {
+        $dir = self::cache_dir();
+        if ($dir === '') {
+            return '';
+        }
+        $lang = (string) get_post_meta($post_id, '_lisun_manual_lang', true);
+        $key  = md5($post_id . '|' . $lang . '|' . home_url() . '|v' . self::CACHE_VER);
+        return $dir . '/' . (int) $post_id . '-' . $key . '.pdf';
+    }
+
+    /** 是否已有新鲜缓存（filemtime 不早于正文最后修改时间） */
+    private static function has_fresh_pdf($post_id) {
+        $file = self::cache_file_for($post_id);
+        if ($file === '' || !file_exists($file)) {
+            return false;
+        }
+        $fresh = (int) get_post_modified_time('U', true, $post_id);
+        return filemtime($file) >= $fresh;
+    }
+
+    /** 删除某篇的旧缓存（内容更新后废弃，交给预热重新生成） */
+    public static function delete_cached_pdf($post_id) {
+        $dir = self::cache_dir();
+        if ($dir === '') {
+            return;
+        }
+        foreach ((array) glob($dir . '/' . (int) $post_id . '-*.pdf') as $f) {
+            @unlink($f);
+        }
+    }
+
+    /**
+     * 内容更新后废弃旧缓存：不在这里同步生成（跨洋拉图会卡住保存请求），
+     * 交给 cron 预热在后台重新生成。
+     */
+    public static function on_manual_saved($post_id, $post = null, $update = false) {
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+            return;
+        }
+        if (!$post) {
+            $post = get_post($post_id);
+        }
+        if (!$post || $post->post_status !== 'publish') {
+            return;
+        }
+        self::delete_cached_pdf((int) $post_id);
     }
 }

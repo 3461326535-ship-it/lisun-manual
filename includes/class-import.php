@@ -80,7 +80,10 @@ class Lisun_Manual_Import {
         add_action('lisun_sync_product_videos_event', [__CLASS__, 'sync_product_videos_for_manual'], 10, 1);
         add_action('lisun_sync_all_product_videos_event', [__CLASS__, 'sync_all_product_videos'], 10, 0);
         add_action('lisun_sync_all_product_videos_once_event', [__CLASS__, 'sync_all_product_videos'], 10, 0);
-        add_action('init', [__CLASS__, 'ensure_product_video_cron']);
+        // 立即调度，勿挂 init：本类 init() 由 lisun_manual_init() 在 init 优先级 10 内同步调用，
+        // 若 add_action('init', …, 10) 同优先级挂载，WP_Hook 会按 copy-on-write 快照迭代该优先级，
+        // 新回调被追加到快照之后、本次 init 永远不执行 → 每日兜底任务从未注册。
+        self::ensure_product_video_cron();
     }
 
     /** 产品保存后排队处理，避免阻塞产品编辑请求。 */
