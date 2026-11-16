@@ -486,8 +486,15 @@ class Lisun_Manual_V2_Materializer {
                 // 单元格内只补句首大写，其余单词保持译法原样。旧逻辑会对
                 // 整格做 body 小写化，把 "Chinese English" 变成
                 // "Chinese english"，专有名词和产品名全部被破坏。
+                //
+                // [修改时间：2026-11-17 02:55:00 +08:00]
+                // 只有「单元格内容确实以小写字母开头」时才算句首。像
+                // "300 × 1200 × 450 mm"、"0.1–999.9 s" 这类以数字/符号开头的格子，
+                // 首个字母并不是句首，之前会被改成 "Mm"、"S"。
                 if (!$started) {
-                    $raw = Lisun_Manual_V2_Term_Matcher::apply_case($raw, 'sentence_start');
+                    if (preg_match('/^\s*[a-z]/u', $raw)) {
+                        $raw = Lisun_Manual_V2_Term_Matcher::apply_case($raw, 'sentence_start');
+                    }
                     $started = true;
                 }
                 $token['raw'] = self::capitalize_sentence_starts($raw);
