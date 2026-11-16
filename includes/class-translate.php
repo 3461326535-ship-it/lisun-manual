@@ -104,6 +104,23 @@ class Lisun_Manual_Translate {
         return false;
     }
 
+    /**
+     * 是不是「有人在后台改完点保存」这种真实编辑请求。
+     *
+     * 保存即翻译/推送只在这种场景生效：批量编辑、自动保存、cron、导入脚本
+     * 都不该顺手打远程站或消耗翻译额度。
+     */
+    private static function is_user_edit_request($post_id) {
+        $post_id = (int) $post_id;
+        if ($post_id <= 0) return false;
+        if (defined('DOING_CRON') && DOING_CRON) return false;
+        if (function_exists('wp_doing_cron') && wp_doing_cron()) return false;
+        if (function_exists('wp_doing_ajax') && wp_doing_ajax()) return false;
+        if (!empty($_POST['bulk_edit']) || !empty($_REQUEST['bulk_edit'])) return false;
+        if (!is_user_logged_in()) return false;
+        return current_user_can('edit_post', $post_id);
+    }
+
     /** 当前文章是否还有未完成的队列任务。 */
     private static function has_active_translation_job($post_id) {
         global $wpdb;
@@ -648,6 +665,21 @@ class Lisun_Manual_Translate {
                     . ' images=' . (int) ($media_sync['images'] ?? 0)
                     . ' changed=' . (!empty($media_sync['changed']) ? 'yes' : 'no')
                     . ' status=' . (string) get_post_meta($post_id, '_lisun_manual_sync_status', true));
+
+                // 保存即推送：换图是确定性改动，不需要翻译，同步完直接排一个纯推送任务。
+                if (!empty($media_sync['changed'])
+                    && !$active_job
+                    && self::is_user_edit_request($post_id)) {
+                    $push_job = self::enqueue_job($post_id, 'push');
+                    if ($push_job) {
+                        self::trigger_queue_worker($post_id);
+                        self::debug_log('auto push queued after image change post=' . (int) $post_id
+                            . ' job=' . (int) $push_job);
+                    } else {
+                        update_post_meta($post_id, '_lisun_manual_last_error', '换图后自动推送入队失败，请在翻译管理里手动重推');
+                        self::debug_log('auto push enqueue FAILED post=' . (int) $post_id);
+                    }
+                }
                 return;
             }
             // 图片数量对不上时无法按顺序定位，交回原有逻辑：标记待翻译，等人工处理。
@@ -678,6 +710,16 @@ class Lisun_Manual_Translate {
         // 不清除备份；translate_post 会对比段 hash 只翻译变化的段
 
         $auto_mode = (string) get_post_meta($post_id, '_lisun_auto_translate_mode', true);
+
+        // 2026-11-17：默认行为——已有英文副本的页面，管理员改完点保存就增量翻译并推送，
+        // 不再依赖「保存后自动翻译」勾选。从未翻译过的页面不入队，仍留在待翻译列表里，
+        // 避免批量导入或批量编辑时把额度打光。
+        if (!in_array($auto_mode, ['incremental', 'retranslate'], true)
+            && self::is_user_edit_request($post_id)
+            && (int) get_post_meta($post_id, '_lisun_manual_target_id', true) > 0) {
+            $auto_mode = 'incremental';
+        }
+
         if (in_array($auto_mode, ['incremental', 'retranslate'], true)) {
             $job_id = $auto_mode === 'retranslate'
                 ? self::enqueue_retranslate_translation_job($post_id)
@@ -3700,7 +3742,14 @@ class Lisun_Manual_Translate {
         @ignore_user_abort(true);
 
         try {
-            if ($job->action === 'glossary_apply') {
+            if ($job->action === 'push') {
+                // 2026-11-17 保存后自动推送：只把已有的本地英文副本发到远程站，
+                // 不碰翻译。图片由 push_translation 在请求边界按当前源文覆盖。
+                $remote = Lisun_Manual_Sync::push_existing_translation($post_id);
+                $result = is_wp_error($remote)
+                    ? $remote
+                    : ['pushed' => true, 'remote_id' => (int) $remote, 'message' => '推送成功'];
+            } elseif ($job->action === 'glossary_apply') {
                 $payload = json_decode((string) ($job->payload ?? ''), true);
                 $payload = is_array($payload) ? $payload : [];
                 $result = self::apply_glossary_term_to_post(
@@ -3857,6 +3906,10 @@ class Lisun_Manual_Translate {
                     (string) ($error_data['code'] ?? ''),
                     $display_error
                 );
+                // 纯推送任务的失败就是推送失败，不能让页面停在「已更新，待推送」。
+                if ($job->action === 'push' && $page_status !== 'failed') {
+                    $page_status = 'push_failed';
+                }
                 update_post_meta($post_id, '_lisun_manual_sync_status', $page_status);
                 if ($page_status === 'synced' && class_exists('Lisun_Manual_V2_Repository')) {
                     Lisun_Manual_V2_Repository::update_document_state($post_id, 'synced', null, '');
