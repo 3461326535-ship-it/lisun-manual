@@ -258,7 +258,13 @@ $log_total = $logs_result['total'];
                         <span style="color:#999;">—</span>
                     <?php endif; ?>
                 </td>
-                <td><span style="color:#d63638;"><?php _e('推送失败', 'lisun-manual'); ?></span></td>
+                <td>
+                    <?php if (get_post_meta($post->ID, '_lisun_manual_sync_status', true) === 'translated'): ?>
+                        <span style="color:#dba617;"><?php _e('已更新，待推送', 'lisun-manual'); ?></span>
+                    <?php else: ?>
+                        <span style="color:#d63638;"><?php _e('推送失败', 'lisun-manual'); ?></span>
+                    <?php endif; ?>
+                </td>
                 <td>
                     <button type="button" class="button button-small lisun-retry-push" data-id="<?php echo $post->ID; ?>"><?php _e('重试推送', 'lisun-manual'); ?></button>
                     <button type="button" class="button button-small lisun-retranslate-incr" data-id="<?php echo $post->ID; ?>"><?php _e('增量重译', 'lisun-manual'); ?></button>

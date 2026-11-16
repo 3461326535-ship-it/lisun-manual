@@ -45,6 +45,7 @@ class Lisun_Manual_Translate {
     private static $last_llm_error = '';
     private static $last_llm_response = '';
     private static $queue_schema_checked = false;
+    private static $last_v2_comparison = null; // 最近一次 V2 源文比对结果（含 reason）
 
     /**
      * V2 的源文指纹包含标题和正文；不能只依赖旧版 content_hash。
@@ -88,6 +89,7 @@ class Lisun_Manual_Translate {
             (string) $post->post_content,
             (string) $post->post_title
         );
+        self::$last_v2_comparison = is_array($comparison) ? $comparison : null;
         if (!empty($comparison['matches'])) {
             self::debug_log('V2 source accepted as semantically equivalent post=' . (int) $post->ID
                 . ' reason=' . (string) ($comparison['reason'] ?? 'format_only')
@@ -624,6 +626,35 @@ class Lisun_Manual_Translate {
                 error_log("LISUN Manual: post {$post_id} status repaired to synced; V2 source revision still matches");
             }
             return;
+        }
+
+        // 2026-11-17：只换了图，正文和标题一个字都没改。
+        // 这种情况不需要重新翻译（重译会让措辞漂移），但英文副本里的 <img>
+        // 必须立刻跟上当前中文源文，否则会一直显示旧图。这里只按顺序复制
+        // <img> 标记，零翻译请求，状态置为「已更新，待推送」。
+        $v2_reason = (string) (self::$last_v2_comparison['reason'] ?? '');
+        if ($v2_reason === 'images_changed' && class_exists('Lisun_Manual_Sync')) {
+            $media_sync = Lisun_Manual_Sync::sync_local_english_media($post_id, (string) $post->post_content);
+            $handled = !is_wp_error($media_sync)
+                && in_array((string) ($media_sync['reason'] ?? ''), ['images_synced', 'already_in_sync'], true);
+            if ($handled) {
+                update_post_meta($post_id, '_lisun_manual_content_hash', $current_hash);
+                $active_job = self::has_active_translation_job($post_id);
+                $outdated = !empty($media_sync['changed']) || $old_status === 'pending';
+                if ($outdated && !$active_job && !in_array($old_status, ['translated', 'push_failed'], true)) {
+                    update_post_meta($post_id, '_lisun_manual_sync_status', 'translated');
+                }
+                self::debug_log('images synced to EN copy without retranslation post=' . (int) $post_id
+                    . ' images=' . (int) ($media_sync['images'] ?? 0)
+                    . ' changed=' . (!empty($media_sync['changed']) ? 'yes' : 'no')
+                    . ' status=' . (string) get_post_meta($post_id, '_lisun_manual_sync_status', true));
+                return;
+            }
+            // 图片数量对不上时无法按顺序定位，交回原有逻辑：标记待翻译，等人工处理。
+            self::debug_log('images sync skipped post=' . (int) $post_id
+                . ' reason=' . (is_wp_error($media_sync)
+                    ? $media_sync->get_error_code() . ': ' . $media_sync->get_error_message()
+                    : (string) ($media_sync['reason'] ?? 'unknown')));
         }
 
         // 内容确实已变更 → 重置翻译状态
