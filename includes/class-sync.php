@@ -400,7 +400,7 @@ class Lisun_Manual_Sync {
         // 生成修订版本并影响文章列表排序，这里只需要换掉图片标记。
         global $wpdb;
         $now = current_time('mysql');
-        $wpdb->update(
+        $updated = $wpdb->update(
             $wpdb->posts,
             [
                 'post_content'       => $synced,
@@ -409,6 +409,12 @@ class Lisun_Manual_Sync {
             ],
             ['ID' => $en_post_id]
         );
+        if ($updated === false) {
+            return new WP_Error(
+                'media_sync_db_update_failed',
+                '英文副本图片同步写入数据库失败，请重试或检查数据库日志'
+            );
+        }
         clean_post_cache($en_post_id);
 
         update_post_meta($zh_post_id, '_lisun_manual_media_synced_at', $now);
