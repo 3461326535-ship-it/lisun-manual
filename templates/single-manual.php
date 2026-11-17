@@ -45,13 +45,19 @@ if (!defined('ABSPATH')) {
     if ($lisun_raw_name === '') {
         $lisun_raw_name = trim(wp_title('', false));
     }
-    // 去掉尾部已经存在的「说明书」类词和后缀品牌名，避免拼接重复。
+    // 先去掉品牌尾巴，再去掉「说明书」类尾巴；顺序不能颠倒。
+    // 例如「Product - User's Manual - LISUN」若先匹配 Manual，会因末尾仍有
+    // LISUN 而无法命中，最终造成 Manual 后缀重复。
     $lisun_product_name = preg_replace(
-        '/[\s\-–—|,，]*(操作使用说明书|操作说明书|使用说明书|说明书|user\'?s?\s+manual|manual)\s*$/iu',
+        '/\s*[-–—|]\s*(LISUN|力汕).*$/iu',
         '',
         $lisun_raw_name
     );
-    $lisun_product_name = preg_replace('/\s*[-–—|]\s*(LISUN|力汕).*$/iu', '', (string) $lisun_product_name);
+    $lisun_product_name = preg_replace(
+        '/[\s\-–—|,，]*(操作使用说明书|操作说明书|使用说明书|说明书|user\'?s?\s+manual|manual)\s*$/iu',
+        '',
+        (string) $lisun_product_name
+    );
     $lisun_product_name = trim((string) $lisun_product_name);
     // 若清理后什么都不剩（标题本身就只有「操作使用说明书」这类词），回退原名，
     // 至少不要产出一个只有后缀的标题。
