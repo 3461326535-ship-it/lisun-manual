@@ -711,15 +711,6 @@ class Lisun_Manual_Translate {
 
         $auto_mode = (string) get_post_meta($post_id, '_lisun_auto_translate_mode', true);
 
-        // 2026-11-17：默认行为——已有英文副本的页面，管理员改完点保存就增量翻译并推送，
-        // 不再依赖「保存后自动翻译」勾选。从未翻译过的页面不入队，仍留在待翻译列表里，
-        // 避免批量导入或批量编辑时把额度打光。
-        if (!in_array($auto_mode, ['incremental', 'retranslate'], true)
-            && self::is_user_edit_request($post_id)
-            && (int) get_post_meta($post_id, '_lisun_manual_target_id', true) > 0) {
-            $auto_mode = 'incremental';
-        }
-
         if (in_array($auto_mode, ['incremental', 'retranslate'], true)) {
             $job_id = $auto_mode === 'retranslate'
                 ? self::enqueue_retranslate_translation_job($post_id)
