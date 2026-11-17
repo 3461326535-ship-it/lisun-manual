@@ -54,7 +54,7 @@ if (!defined('ABSPATH')) {
         $lisun_raw_name
     );
     $lisun_product_name = preg_replace(
-        '/[\s\-–—|,，]*(操作使用说明书|操作说明书|使用说明书|说明书|user\'?s?\s+manual|manual)\s*$/iu',
+        '/[\s\-–—|,，]*(操作使用说明书|操作说明书|使用说明书|说明书|user\'?s?\s+manual|instruction\s+manual|operating\s+manual|operation\s+manual|manual)\s*$/iu',
         '',
         (string) $lisun_product_name
     );
