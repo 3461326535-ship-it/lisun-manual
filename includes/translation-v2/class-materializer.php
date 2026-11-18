@@ -315,6 +315,8 @@ class Lisun_Manual_V2_Materializer {
         if (!is_array($parts)) return (string) $text;
 
         $result = '';
+        $last_was_term = false;
+        $last_term_value = '';
         $part_count = count($parts);
         // Use indexed access instead of foreach values here.  The next text
         // part may be trimmed when it duplicates a rendered term; that
@@ -335,11 +337,33 @@ class Lisun_Manual_V2_Materializer {
                         $parts[$part_index + 1],
                         $value
                     );
+                    // [修改时间：2026-11-16 15:40:00 +08:00]
+                    // 槽位换回完整英文术语后，后面常残留同一个词：
+                    // "the {{term}}sphere" → "the Integrating Spheresphere"。
+                    $parts[$part_index + 1] = self::remove_duplicate_term_tail_word(
+                        $parts[$part_index + 1],
+                        $value
+                    );
                 }
                 $result .= $value;
+                $last_term_value = (string) $value;
+                $last_was_term = true;
                 continue;
             }
 
+            // [修改时间：2026-11-16 15:40:00 +08:00]
+            // 槽位展开后下一个词会直接贴上来：
+            // "{{term}}the interior" → "Integrating Spherethe interior"。
+            // 只在两侧都是英文字母时补一个空格，标点/标签边界不受影响。
+            if ($last_was_term && $part !== '' && $last_term_value !== '') {
+                $tail_char = substr(rtrim($last_term_value), -1);
+                $leading = ltrim($part);
+                $head_char = $leading !== '' ? substr($leading, 0, 1) : '';
+                if ($tail_char !== '' && preg_match('/[A-Za-z]/', $tail_char)
+                    && $head_char !== '' && preg_match('/[A-Za-z]/', $head_char)) {
+                    $part = ' ' . $leading;
+                }
+            }
             $result .= $part;
         }
         return $result;
@@ -384,7 +408,40 @@ class Lisun_Manual_V2_Materializer {
     }
 
     /**
+     * [修改时间：2026-11-16 15:40:00 +08:00]
+     * 术语槽位展开后，紧邻文本常以该术语的最后一个词开头，这是翻译接口
+     * 把同一个词在槽位前后各写了一次造成的重复，不是原文内容。
+     *
+     * 只在完整词边界上删除（后面若是字母/数字则视为另一个词，保持原样），
+     * 例如 "Integrating Sphere" + "sphere." 会合并成 "Integrating Sphere."，
+     * 而 "Ball" + "ballast" 不会被误改。
+     */
+    private static function remove_duplicate_term_tail_word($text, $value) {
+        $value = trim((string) $value);
+        if ($value === '') return $text;
+        $words = preg_split('/\s+/u', $value);
+        $tail = (string) end($words);
+        if ($tail === '' || strlen($tail) < 3) return $text;
+
+        $text = (string) $text;
+        $leading = '';
+        if (preg_match('/^\s*/', $text, $match)) $leading = (string) $match[0];
+        $offset = strlen($leading);
+        $length = strlen($tail);
+        if (strlen($text) < $offset + $length) return $text;
+        if (substr_compare($text, $tail, $offset, $length, true) !== 0) return $text;
+
+        $after = $offset + $length;
+        if ($after < strlen($text) && preg_match('/[A-Za-z0-9]/', substr($text, $after, 1))) {
+            return $text;
+        }
+        return $leading . substr($text, $after);
+    }
+
+    /**
+     * [修改时间：2026-11-16 15:40:00 +08:00]
      * 把每个句子（. ! ? 之后）的首字母补成大写，其余字符保持原样。
+     * 表格单元格里一句话里含多个句子时，第二句也曾被整段小写。
      */
     private static function capitalize_sentence_starts($text) {
         return preg_replace_callback(
@@ -424,8 +481,15 @@ class Lisun_Manual_V2_Materializer {
                 $started = false;
             } elseif ($depth > 0 && ($token['type'] ?? '') === 'text' && trim((string) $token['raw']) !== '') {
                 $raw = (string) $token['raw'];
-                // 只在单元格内容确实以小写字母开头时补句首大写；
-                // 数字/符号开头的单位 mm、s 不应变成 Mm、S。
+                // [修改时间：2026-11-16 15:40:00 +08:00]
+                // 单元格内只补句首大写，其余单词保持译法原样。旧逻辑会对
+                // 整格做 body 小写化，把 "Chinese English" 变成
+                // "Chinese english"，专有名词和产品名全部被破坏。
+                //
+                // [修改时间：2026-11-17 02:55:00 +08:00]
+                // 只有「单元格内容确实以小写字母开头」时才算句首。像
+                // "300 × 1200 × 450 mm"、"0.1–999.9 s" 这类以数字/符号开头的格子，
+                // 首个字母并不是句首，之前会被改成 "Mm"、"S"。
                 if (!$started) {
                     if (preg_match('/^\s*[a-z]/u', $raw)) {
                         $raw = Lisun_Manual_V2_Term_Matcher::apply_case($raw, 'sentence_start');

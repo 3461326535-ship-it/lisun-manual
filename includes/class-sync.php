@@ -361,6 +361,84 @@ class Lisun_Manual_Sync {
     }
 
     /**
+     * 2026-11-17：把当前中文源文的图片同步进本地英文副本，不调用翻译接口。
+     *
+     * 触发点：中文后台保存时只改了图片、正文和标题没变。此时译文文字仍然有效，
+     * 界面上的「重译」只会让措辞漂移，真正缺的只是英文正文里的 <img>。
+     * 这里按顺序复制 <img> 标记，同时更新翻译备份里的 en_content，保证后续
+     * 增量翻译不会把旧图再带回来。推送时 class-sync 会在请求边界再校验一次。
+     *
+     * @param int         $zh_post_id  中文 manual 页面 ID
+     * @param string|null $source_html 当前中文正文，缺省读库
+     * @return array|WP_Error ['changed'=>bool,'reason'=>string,'images'=>int]
+     */
+    public static function sync_local_english_media($zh_post_id, $source_html = null) {
+        $zh_post_id = (int) $zh_post_id;
+        $en_post_id = (int) get_post_meta($zh_post_id, '_lisun_manual_target_id', true);
+        if (!$en_post_id) {
+            return ['changed' => false, 'reason' => 'no_local_translation', 'images' => 0];
+        }
+        $en_post = get_post($en_post_id);
+        if (!$en_post) {
+            return ['changed' => false, 'reason' => 'no_local_translation', 'images' => 0];
+        }
+
+        $source_html = $source_html === null
+            ? (string) get_post_field('post_content', $zh_post_id, 'raw')
+            : (string) $source_html;
+        $english_html = (string) $en_post->post_content;
+
+        $synced = self::sync_current_source_images($source_html, $english_html);
+        if (is_wp_error($synced)) return $synced;
+
+        $images = preg_match_all('/<img\b[^>]*>/is', $source_html, $unused) ? count($unused[0]) : 0;
+        if ($synced === $english_html) {
+            return ['changed' => false, 'reason' => 'already_in_sync', 'images' => $images];
+        }
+
+        // 直接写 posts 表：wp_update_post 会再触发 save_post_manual 保存钩子、
+        // 生成修订版本并影响文章列表排序，这里只需要换掉图片标记。
+        global $wpdb;
+        $now = current_time('mysql');
+        $updated = $wpdb->update(
+            $wpdb->posts,
+            [
+                'post_content'       => $synced,
+                'post_modified'      => $now,
+                'post_modified_gmt'  => get_gmt_from_date($now),
+            ],
+            ['ID' => $en_post_id]
+        );
+        if ($updated === false) {
+            return new WP_Error(
+                'media_sync_db_update_failed',
+                '英文副本图片同步写入数据库失败，请重试或检查数据库日志'
+            );
+        }
+        clean_post_cache($en_post_id);
+
+        update_post_meta($zh_post_id, '_lisun_manual_media_synced_at', $now);
+
+        // 翻译备份里的 en_content 也要换成新图，否则下一次增量翻译复用旧段时
+        // 会把过期的 <img> 重新写回英文副本。
+        if (class_exists('Lisun_Manual_Translate')
+            && method_exists('Lisun_Manual_Translate', 'get_translation_backup')) {
+            $backup = Lisun_Manual_Translate::get_translation_backup($zh_post_id);
+            if (is_array($backup) && !empty($backup['en_content'])) {
+                $backup_synced = self::sync_current_source_images($source_html, (string) $backup['en_content']);
+                if (!is_wp_error($backup_synced) && $backup_synced !== (string) $backup['en_content']) {
+                    $backup['en_content'] = $backup_synced;
+                    $backup['media_synced_at'] = $now;
+                    // 与 save_translation_backup 一致：备份不 autoload。
+                    update_option('lisun_trans_bak_' . $zh_post_id, $backup, false);
+                }
+            }
+        }
+
+        return ['changed' => true, 'reason' => 'images_synced', 'images' => $images];
+    }
+
+    /**
      * 把中文页面已翻译的本地英文内容推送到远程站
      *
      * @param int $zh_post_id 中文 manual 页面 ID
