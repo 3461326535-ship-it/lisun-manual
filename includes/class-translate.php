@@ -2115,6 +2115,9 @@ class Lisun_Manual_Translate {
                     'local_updated' => true,
                     'updated' => (int) ($result['updated'] ?? 0),
                     'requests' => (int) ($result['requests'] ?? 0),
+                    // Keep the committed revision so this local-only apply can
+                    // still be undone after the remote push error.
+                    'revision_id' => (int) ($publication['revision_id'] ?? 0),
                 ]
             );
         }
@@ -3141,6 +3144,10 @@ class Lisun_Manual_Translate {
                 'v2' => true,
                 'local_updated' => true,
                 'pushed' => false,
+                // The revision was already committed before the remote push
+                // ran, so it has to travel back with the failure: without it
+                // the application cannot be undone to a known revision.
+                'revision_id' => (int) ($result['revision_id'] ?? 0),
                 'push_msg' => $push->get_error_message(),
                 'translated_units' => (int) ($result['translated_units'] ?? 0),
                 'reused_units' => (int) ($result['reused_units'] ?? 0),
@@ -3640,6 +3647,28 @@ class Lisun_Manual_Translate {
                 'updated_at' => current_time('mysql'),
             ], ['id' => $job->id]);
             error_log("LISUN Manual: post {$post_id} is EN-locked, skipping queued job");
+            self::release_worker_slot();
+            self::$current_job_id = 0;
+            return ['job_id' => $job->id, 'post_id' => $post_id, 'status' => 'skipped'];
+        }
+
+        // 任务类型白名单。action=push 的纯推送任务已随「保存即推送」一起下线，
+        // 但历史记录可能还留在队列里：不拦的话它会落到下面的 else 分支被当成
+        // 一次完整翻译执行——静默消耗翻译额度、改写已有译文，失败时还会把本来
+        // 已经 synced 的页面标成失败。这里按无效任务归档，不碰页面状态。
+        if (!in_array((string) $job->action, ['translate', 'retranslate', 'glossary_apply'], true)) {
+            $wpdb->update($table, [
+                'status'      => 'done',
+                'error_msg'   => 'unsupported action, skipped',
+                'result_json' => wp_json_encode([
+                    'skipped' => true,
+                    'reason'  => 'unsupported action',
+                    'action'  => (string) $job->action,
+                ]),
+                'updated_at'  => current_time('mysql'),
+            ], ['id' => $job->id]);
+            self::debug_log('worker job SKIP reason=unsupported_action job=' . intval($job->id)
+                . ' action=' . (string) $job->action);
             self::release_worker_slot();
             self::$current_job_id = 0;
             return ['job_id' => $job->id, 'post_id' => $post_id, 'status' => 'skipped'];

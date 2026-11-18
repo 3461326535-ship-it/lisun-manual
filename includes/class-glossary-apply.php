@@ -368,8 +368,25 @@ class Lisun_Manual_Glossary_Apply {
 
         // Run the actual rollback.
         $result = Lisun_Manual_Translate::undo_glossary_apply($post_id, $applied_revision_id);
+        $remote_warning = '';
         if (is_wp_error($result)) {
-            wp_send_json_error(['message' => $result->get_error_message()]);
+            $error_data = $result->get_error_data();
+            // The local revision and English copy are already restored before
+            // the remote push runs. A remote failure must not leave the UI
+            // offering the same undo again; persist the undo marker and return
+            // success-with-warning so the article becomes re-applicable.
+            if ($result->get_error_code() === 'push_failed'
+                && is_array($error_data) && !empty($error_data['restored'])) {
+                $remote_warning = $result->get_error_message();
+                $result = [
+                    'restored' => true,
+                    'previous_revision_id' => (int) ($error_data['previous_revision_id'] ?? 0),
+                    'applied_revision_id' => $applied_revision_id,
+                    'pushed' => false,
+                ];
+            } else {
+                wp_send_json_error(['message' => $result->get_error_message()]);
+            }
         }
 
         $undone_at = current_time('mysql');
@@ -380,6 +397,8 @@ class Lisun_Manual_Glossary_Apply {
             'batch_id' => $batch_id,
             'applied_revision_id' => $applied_revision_id,
             'restored_revision_id' => $restored_revision_id,
+            'remote_sync_status' => $remote_warning ? 'pending' : 'synced',
+            'remote_sync_error' => $remote_warning,
         ];
 
         // The UI may be showing an application from an older batch while the
@@ -454,6 +473,8 @@ class Lisun_Manual_Glossary_Apply {
                 $post_history[$i]['undone'] = true;
                 $post_history[$i]['undone_at'] = $undone_at;
                 $post_history[$i]['restored_revision_id'] = $restored_revision_id;
+                $post_history[$i]['remote_sync_status'] = $remote_warning ? 'pending' : 'synced';
+                $post_history[$i]['remote_sync_error'] = $remote_warning;
                 $history_updated = true;
             }
         }
@@ -468,6 +489,8 @@ class Lisun_Manual_Glossary_Apply {
                 'restored_revision_id' => $restored_revision_id,
                 'undone' => true,
                 'undone_at' => $undone_at,
+                'remote_sync_status' => $remote_warning ? 'pending' : 'synced',
+                'remote_sync_error' => $remote_warning,
                 'time' => $undone_at,
             ]);
         }
@@ -510,7 +533,13 @@ class Lisun_Manual_Glossary_Apply {
         }
 
         wp_send_json_success([
-            'message' => '已撤销并恢复到应用前的译文，远程站已更新',
+            'message' => $remote_warning
+                ? '本地已撤销；远程英文站尚未同步，请重推撤销后的版本'
+                : '已撤销并恢复到应用前的译文，远程站已更新',
+            'warning' => $remote_warning,
+            'pushed' => !$remote_warning,
+            'local_status' => 'undone',
+            'remote_status' => $remote_warning ? 'pending' : 'synced',
             'previous_revision_id' => (int) ($result['previous_revision_id'] ?? 0),
         ]);
     }
@@ -1137,6 +1166,12 @@ class Lisun_Manual_Glossary_Apply {
                     $application['undone'] = true;
                     $application['undone_at'] = (string) ($undo_marker['undone_at'] ?? '');
                     $application['restored_revision_id'] = (int) ($undo_marker['restored_revision_id'] ?? 0);
+                    // Keep the remote sync state on every undo path, otherwise
+                    // an article whose marker is only in batch details reports
+                    // a plain 「已撤销」 and looks fully synced while the remote
+                    // English site still holds the old translation.
+                    $application['remote_sync_status'] = (string) ($undo_marker['remote_sync_status'] ?? '');
+                    $application['remote_sync_error'] = (string) ($undo_marker['remote_sync_error'] ?? '');
                 }
                 // Article-level undo index is authoritative when a later
                 // queue write has replaced the batch details JSON.
@@ -1156,6 +1191,8 @@ class Lisun_Manual_Glossary_Apply {
                             $application['undone'] = true;
                             $application['undone_at'] = (string) ($undo_marker['undone_at'] ?? '');
                             $application['restored_revision_id'] = (int) ($undo_marker['restored_revision_id'] ?? 0);
+                            $application['remote_sync_status'] = (string) ($undo_marker['remote_sync_status'] ?? '');
+                            $application['remote_sync_error'] = (string) ($undo_marker['remote_sync_error'] ?? '');
                         }
                     }
 
@@ -1177,6 +1214,8 @@ class Lisun_Manual_Glossary_Apply {
                             if (!$same_revision && !$same_batch) continue;
                             $application['undone'] = true;
                             $application['undone_at'] = (string) ($legacy_record['undone_at'] ?? '');
+                            $application['remote_sync_status'] = (string) ($legacy_record['remote_sync_status'] ?? '');
+                            $application['remote_sync_error'] = (string) ($legacy_record['remote_sync_error'] ?? '');
                             $application['restored_revision_id'] = (int) ($legacy_record['restored_revision_id'] ?? 0);
                         }
                     }
@@ -2455,7 +2494,12 @@ class Lisun_Manual_Glossary_Apply {
                 $matched = (string) ($part['source_text'] ?? '');
                 $before_len = 70;
                 $after_len = 90;
-                $before = mb_substr($source, max(0, $offset - $before_len), $before_len);
+                $before_start = max(0, $offset - $before_len);
+                // The prefix must end exactly where the matched term starts.
+                // Using a fixed $before_len when the match is near the start
+                // also captured text after the term, then $after appended that
+                // same text again and made the context sentence look repeated.
+                $before = mb_substr($source, $before_start, $offset - $before_start);
                 $after = mb_substr($source, $offset + mb_strlen($matched), $after_len);
                 $prefix = $offset > $before_len ? '…' : '';
                 $suffix = mb_strlen($source) > $offset + mb_strlen($matched) + $after_len ? '…' : '';
@@ -2524,7 +2568,12 @@ class Lisun_Manual_Glossary_Apply {
             $applications[$i]['undo_available'] = false;
             $applications[$i]['undo_reason'] = '';
             $applications[$i]['undo_warning'] = '';
-            if ($status !== 'done') {
+            // A local-only row means the local revision and the local English
+            // copy were already updated and only the remote push failed. The
+            // change is real, and undo is a purely local operation, so it must
+            // not be blocked by the remote sync state.
+            $local_only = !empty($app['local_only']);
+            if ($status !== 'done' && !$local_only) {
                 $applications[$i]['undo_reason'] = '未成功应用';
                 continue;
             }
@@ -2553,6 +2602,12 @@ class Lisun_Manual_Glossary_Apply {
                 // 不再禁止撤销：用户可能正是要撤回错误应用的术语。
                 // 但必须在前端明确提示，恢复前置版本会覆盖应用后的译文。
                 $applications[$i]['undo_warning'] = '应用后已有新翻译，撤销会恢复应用前版本并覆盖之后的译文';
+            }
+            if ($local_only) {
+                // Informational only: this must not travel as undo_warning,
+                // because the UI uses that flag to warn about overwriting a
+                // newer translation, which is not what happened here.
+                $applications[$i]['undo_note'] = '本次应用仅本地生效、远程未同步；撤销会恢复到应用前版本，之后仍需推送';
             }
             $prev = Lisun_Manual_V2_Repository::previous_revision_id($post_id, $applied_rev);
             if ($prev <= 0) {
@@ -2605,6 +2660,12 @@ class Lisun_Manual_Glossary_Apply {
                     $by_post[$post_id]['pushed'] = false;
                     $by_post[$post_id]['error_code'] = 'push_failed';
                     $by_post[$post_id]['error'] = (string) (($result['message'] ?? '') ?: ($result['push_msg'] ?? ($row['error_msg'] ?? '远程英文站推送失败，本地译文已更新但尚未推送')));
+                    if (!empty($result['revision_id'])) {
+                        // The local revision was committed before the push ran.
+                        // Keep it so the article stays undoable: a local-only
+                        // apply is a real local change, not a no-op.
+                        $by_post[$post_id]['applied_revision_id'] = (int) $result['revision_id'];
+                    }
                 }
                 if ($warning_only) {
                     $by_post[$post_id]['status'] = 'done';
@@ -2654,6 +2715,11 @@ class Lisun_Manual_Glossary_Apply {
                 'error' => (string) (($result['message'] ?? '') ?: ($row['error_msg'] ?? '')),
                 'time' => (string) ($row['updated_at'] ?? ''),
             ];
+            if (!empty($result['revision_id'])) {
+                // Local-only apply: the revision moved even though the push
+                // failed, so record it and let the article be undone.
+                $by_post[$post_id]['applied_revision_id'] = (int) $result['revision_id'];
+            }
             if (is_array($result['post_apply_audit'] ?? null)) {
                 $by_post[$post_id]['post_apply_audit'] = $result['post_apply_audit'];
             }
@@ -2860,3 +2926,4 @@ class Lisun_Manual_Glossary_Apply {
         });
     }
 }
+
