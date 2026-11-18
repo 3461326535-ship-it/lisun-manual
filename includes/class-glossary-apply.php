@@ -1166,6 +1166,12 @@ class Lisun_Manual_Glossary_Apply {
                     $application['undone'] = true;
                     $application['undone_at'] = (string) ($undo_marker['undone_at'] ?? '');
                     $application['restored_revision_id'] = (int) ($undo_marker['restored_revision_id'] ?? 0);
+                    // Keep the remote sync state on every undo path, otherwise
+                    // an article whose marker is only in batch details reports
+                    // a plain 「已撤销」 and looks fully synced while the remote
+                    // English site still holds the old translation.
+                    $application['remote_sync_status'] = (string) ($undo_marker['remote_sync_status'] ?? '');
+                    $application['remote_sync_error'] = (string) ($undo_marker['remote_sync_error'] ?? '');
                 }
                 // Article-level undo index is authoritative when a later
                 // queue write has replaced the batch details JSON.

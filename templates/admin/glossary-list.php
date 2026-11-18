@@ -1122,16 +1122,31 @@ jQuery(function ($) {
     }
 
     function latestApplicationsByPost(history) {
-        var byPost = {};
+        var newest = {};
+        var undoable = {};
         $.each(history || [], function (_, batch) {
             $.each(batch.applications || [], function (_, application) {
                 var postId = String(application.post_id || '');
-                if (!postId || postId === '0' || byPost[postId]) return;
+                if (!postId || postId === '0') return;
                 application._batch_id = batch.batch_id || application.batch_id || '';
-                byPost[postId] = application;
+                // history is newest-first, so the first record per article is
+                // the one whose reason text belongs on the card.
+                if (!newest[postId]) newest[postId] = application;
+                // A later failed batch must not hide the undo entry of the
+                // successful application it followed: remember the newest
+                // record that is still safely undoable and prefer it.
+                if (!undoable[postId]
+                    && !application.undone
+                    && application.undo_available
+                    && application.applied_revision_id) {
+                    undoable[postId] = application;
+                }
             });
         });
-        return byPost;
+        $.each(newest, function (postId) {
+            if (undoable[postId]) newest[postId] = undoable[postId];
+        });
+        return newest;
     }
 
     function escCandidates(items, history) {
