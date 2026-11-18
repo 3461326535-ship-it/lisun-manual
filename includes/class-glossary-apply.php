@@ -473,6 +473,8 @@ class Lisun_Manual_Glossary_Apply {
                 $post_history[$i]['undone'] = true;
                 $post_history[$i]['undone_at'] = $undone_at;
                 $post_history[$i]['restored_revision_id'] = $restored_revision_id;
+                $post_history[$i]['remote_sync_status'] = $remote_warning ? 'pending' : 'synced';
+                $post_history[$i]['remote_sync_error'] = $remote_warning;
                 $history_updated = true;
             }
         }
@@ -487,6 +489,8 @@ class Lisun_Manual_Glossary_Apply {
                 'restored_revision_id' => $restored_revision_id,
                 'undone' => true,
                 'undone_at' => $undone_at,
+                'remote_sync_status' => $remote_warning ? 'pending' : 'synced',
+                'remote_sync_error' => $remote_warning,
                 'time' => $undone_at,
             ]);
         }
@@ -1181,6 +1185,8 @@ class Lisun_Manual_Glossary_Apply {
                             $application['undone'] = true;
                             $application['undone_at'] = (string) ($undo_marker['undone_at'] ?? '');
                             $application['restored_revision_id'] = (int) ($undo_marker['restored_revision_id'] ?? 0);
+                            $application['remote_sync_status'] = (string) ($undo_marker['remote_sync_status'] ?? '');
+                            $application['remote_sync_error'] = (string) ($undo_marker['remote_sync_error'] ?? '');
                         }
                     }
 
@@ -1202,6 +1208,8 @@ class Lisun_Manual_Glossary_Apply {
                             if (!$same_revision && !$same_batch) continue;
                             $application['undone'] = true;
                             $application['undone_at'] = (string) ($legacy_record['undone_at'] ?? '');
+                            $application['remote_sync_status'] = (string) ($legacy_record['remote_sync_status'] ?? '');
+                            $application['remote_sync_error'] = (string) ($legacy_record['remote_sync_error'] ?? '');
                             $application['restored_revision_id'] = (int) ($legacy_record['restored_revision_id'] ?? 0);
                         }
                     }
