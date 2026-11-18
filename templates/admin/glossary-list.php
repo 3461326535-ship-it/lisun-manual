@@ -1205,11 +1205,7 @@ jQuery(function ($) {
             var application = latestApplications[String(item.post_id)] || {};
             var undoButton = '';
             if (applied && application.undo_available && application.applied_revision_id) {
-                var undoConfirmText = application.undo_warning ? '我确认覆盖应用后的新译文' : '我确认恢复到应用前版本';
-                undoButton = '<span class="lisun-impact-undo-control" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-                    '<label style="font-size:11px;color:#b32d2e;white-space:nowrap;"><input type="checkbox" class="lisun-undo-confirm" style="margin:0 3px 0 0;">' + escHtml(undoConfirmText) + '</label>' +
-                    '<button type="button" class="lisun-impact-single lisun-undo-apply" data-post-id="' + escAttr(item.post_id) + '" data-batch-id="' + escAttr(application._batch_id || '') + '" data-revision="' + escAttr(application.applied_revision_id) + '" data-has-newer="' + (application.undo_warning ? '1' : '0') + '" title="' + escAttr(application.undo_warning || '撤销并恢复到应用前版本') + '" style="color:#b32d2e;border-color:#f3b9bb;background:#fff5f5;" disabled>撤销此篇</button>' +
-                    '</span>';
+                undoButton = '<button type="button" class="lisun-impact-single lisun-undo-apply" data-post-id="' + escAttr(item.post_id) + '" data-batch-id="' + escAttr(application._batch_id || '') + '" data-revision="' + escAttr(application.applied_revision_id) + '" data-has-newer="' + (application.undo_warning ? '1' : '0') + '" title="' + escAttr(application.undo_warning || '撤销并恢复到应用前版本') + '" style="color:#b32d2e;border-color:#f3b9bb;background:#fff5f5;">撤销此篇</button>';
             } else if (applied && application.undo_reason) {
                 undoButton = '<span class="lisun-impact-single" style="font-size:11px;color:#888;" title="' + escAttr(application.undo_reason) + '">' + escHtml(application.undo_reason) + '</span>';
             }
@@ -1808,11 +1804,6 @@ jQuery(function ($) {
         var revId = parseInt($btn.data('revision'), 10);
         var hasNewer = String($btn.data('has-newer') || '') === '1';
         if (!postId || !batchId || !revId) return;
-        var $riskCheck = $btn.closest('.lisun-impact-undo-control').find('.lisun-undo-confirm');
-        if (!$riskCheck.prop('checked')) {
-            alert('请先勾选撤销风险确认。');
-            return;
-        }
         var confirmMessage = hasNewer
             ? '这篇文章应用术语后已经产生了新的译文。\n\n继续撤销会恢复到应用术语之前的版本，并覆盖应用后的译文和修改；如果确认这次术语应用不适用于本篇，请点击“确定”继续。\n\n是否继续？'
             : '撤销这一篇的术语应用？\n\n会把这篇英文译文恢复到应用术语之前的版本，并重新推送到远程站。';
@@ -1841,12 +1832,6 @@ jQuery(function ($) {
             $btn.prop('disabled', false).text('撤销此篇');
             alert('撤销请求失败');
         });
-    });
-
-    $(document).on('change click', '.lisun-undo-confirm', function (e) {
-        e.stopPropagation();
-        var $check = $(this);
-        $check.closest('.lisun-impact-undo-control').find('.lisun-undo-apply').prop('disabled', !$check.prop('checked'));
     });
 
     $('#lisun-glossary-impact-body').on('click', '.lisun-retranslate-stale-all', function (e) {
