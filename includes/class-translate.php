@@ -2115,6 +2115,9 @@ class Lisun_Manual_Translate {
                     'local_updated' => true,
                     'updated' => (int) ($result['updated'] ?? 0),
                     'requests' => (int) ($result['requests'] ?? 0),
+                    // Keep the committed revision so this local-only apply can
+                    // still be undone after the remote push error.
+                    'revision_id' => (int) ($publication['revision_id'] ?? 0),
                 ]
             );
         }
@@ -3141,6 +3144,10 @@ class Lisun_Manual_Translate {
                 'v2' => true,
                 'local_updated' => true,
                 'pushed' => false,
+                // The revision was already committed before the remote push
+                // ran, so it has to travel back with the failure: without it
+                // the application cannot be undone to a known revision.
+                'revision_id' => (int) ($result['revision_id'] ?? 0),
                 'push_msg' => $push->get_error_message(),
                 'translated_units' => (int) ($result['translated_units'] ?? 0),
                 'reused_units' => (int) ($result['reused_units'] ?? 0),

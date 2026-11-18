@@ -2568,7 +2568,12 @@ class Lisun_Manual_Glossary_Apply {
             $applications[$i]['undo_available'] = false;
             $applications[$i]['undo_reason'] = '';
             $applications[$i]['undo_warning'] = '';
-            if ($status !== 'done') {
+            // A local-only row means the local revision and the local English
+            // copy were already updated and only the remote push failed. The
+            // change is real, and undo is a purely local operation, so it must
+            // not be blocked by the remote sync state.
+            $local_only = !empty($app['local_only']);
+            if ($status !== 'done' && !$local_only) {
                 $applications[$i]['undo_reason'] = '未成功应用';
                 continue;
             }
@@ -2597,6 +2602,12 @@ class Lisun_Manual_Glossary_Apply {
                 // 不再禁止撤销：用户可能正是要撤回错误应用的术语。
                 // 但必须在前端明确提示，恢复前置版本会覆盖应用后的译文。
                 $applications[$i]['undo_warning'] = '应用后已有新翻译，撤销会恢复应用前版本并覆盖之后的译文';
+            }
+            if ($local_only && $applications[$i]['undo_warning'] === '') {
+                // Undo already rolled the local copy back, but the remote site
+                // was never updated by this apply, so undoing it cannot make
+                // the remote worse — it still needs a later push.
+                $applications[$i]['undo_warning'] = '本次应用仅本地生效、远程未同步；撤销会恢复到应用前版本，之后仍需推送';
             }
             $prev = Lisun_Manual_V2_Repository::previous_revision_id($post_id, $applied_rev);
             if ($prev <= 0) {
@@ -2649,6 +2660,12 @@ class Lisun_Manual_Glossary_Apply {
                     $by_post[$post_id]['pushed'] = false;
                     $by_post[$post_id]['error_code'] = 'push_failed';
                     $by_post[$post_id]['error'] = (string) (($result['message'] ?? '') ?: ($result['push_msg'] ?? ($row['error_msg'] ?? '远程英文站推送失败，本地译文已更新但尚未推送')));
+                    if (!empty($result['revision_id'])) {
+                        // The local revision was committed before the push ran.
+                        // Keep it so the article stays undoable: a local-only
+                        // apply is a real local change, not a no-op.
+                        $by_post[$post_id]['applied_revision_id'] = (int) $result['revision_id'];
+                    }
                 }
                 if ($warning_only) {
                     $by_post[$post_id]['status'] = 'done';
@@ -2698,6 +2715,11 @@ class Lisun_Manual_Glossary_Apply {
                 'error' => (string) (($result['message'] ?? '') ?: ($row['error_msg'] ?? '')),
                 'time' => (string) ($row['updated_at'] ?? ''),
             ];
+            if (!empty($result['revision_id'])) {
+                // Local-only apply: the revision moved even though the push
+                // failed, so record it and let the article be undone.
+                $by_post[$post_id]['applied_revision_id'] = (int) $result['revision_id'];
+            }
             if (is_array($result['post_apply_audit'] ?? null)) {
                 $by_post[$post_id]['post_apply_audit'] = $result['post_apply_audit'];
             }

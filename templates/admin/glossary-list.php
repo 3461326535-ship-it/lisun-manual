@@ -586,7 +586,7 @@ jQuery(function ($) {
         $.each(displayItems, function (_, application) {
             var localOnly = application.local_only || (application.status === 'done' && application.pushed === false);
             var warningOnly = !localOnly && (application.warning_only || application.term_count_warning || (application.post_apply_audit && (application.post_apply_audit.term_count_warning || parseInt(application.post_apply_audit.visible_missing_count || 0, 10) > 0)));
-            var status = application.undone ? '已撤销' : (localOnly ? '失败（本地已更新，远程待重推）' : (labels[application.status] || application.status || '—'));
+            var status = application.undone ? '已撤销' : (localOnly ? '本地已应用（远程未同步）' : (labels[application.status] || application.status || '—'));
             if (warningOnly && status === '已完成') status += '（有警告）';
             var failed = localOnly || (!warningOnly && (application.status === 'failed' || application.status === 'finished_with_errors'));
             var units = unitsByPost[String(application.post_id)] || application.candidate_units || application.translated_units || application.updated || application.occurrences || 0;
@@ -1151,7 +1151,7 @@ jQuery(function ($) {
 
     function escCandidates(items, history) {
         if (!items || !items.length) return '<div class="lisun-impact-empty">没有需要更新的文章</div>';
-        var modeLabels = {direct:'直接替换', incremental:'增量翻译', legacy:'旧版安全替换', local_only:'本地已更新，远程待重推'};
+        var modeLabels = {direct:'直接替换', incremental:'增量翻译', legacy:'旧版安全替换', local_only:'本地已应用 · 远程未同步'};
         var latestApplications = latestApplicationsByPost(history);
         return $.map(items, function (item) {
             var applied = item.status === 'applied';
@@ -1218,12 +1218,24 @@ jQuery(function ($) {
             var selectable = !applied;
             var singleButtonText = hardVisibleFailure ? '重新增量翻译' : '单篇应用';
             var application = latestApplications[String(item.post_id)] || {};
+            // local_only articles already committed a local revision, so they
+            // are just as undoable as applied ones — the missing piece is only
+            // the remote push, which undo does not depend on.
             var undoButton = '';
-            if (applied && application.undo_available && application.applied_revision_id) {
+            if ((applied || localOnly) && application.undo_available && application.applied_revision_id) {
                 undoButton = '<button type="button" class="lisun-impact-single lisun-undo-apply" data-post-id="' + escAttr(item.post_id) + '" data-batch-id="' + escAttr(application._batch_id || '') + '" data-revision="' + escAttr(application.applied_revision_id) + '" data-has-newer="' + (application.undo_warning ? '1' : '0') + '" title="' + escAttr(application.undo_warning || '撤销并恢复到应用前版本') + '" style="color:#b32d2e;border-color:#f3b9bb;background:#fff5f5;">撤销此篇</button>';
             } else if (applied && application.undo_reason) {
                 undoButton = '<span class="lisun-impact-single" style="font-size:11px;color:#888;" title="' + escAttr(application.undo_reason) + '">' + escHtml(application.undo_reason) + '</span>';
             }
+            var applyButton = '<button type="button" class="lisun-impact-single lisun-apply-single" data-post-id="' + escAttr(item.post_id) + '" data-retry-label="' + escAttr(singleButtonText) + '">' + escHtml(singleButtonText) + '</button>';
+            var actionHtml = applied ? undoButton : (localOnly ? (undoButton + applyButton) : applyButton);
+            // A local-only result is not a failure: the English copy on this
+            // site is already updated. Keep its notice neutral instead of the
+            // red error styling so nobody is pushed into retrying a push that
+            // this site is configured not to attempt.
+            var errorPanelStyle = (localOnly && !hardVisibleFailure)
+                ? 'border-left:3px solid #dba617;color:#754b12;'
+                : 'border-left:3px solid #d63638;color:#8a2424;';
             return '<details class="lisun-impact-article' + (selectedPostIds[item.post_id] ? ' is-selected' : '') + '" data-post-id="' + escAttr(item.post_id) + '">' +
                 '<summary>' +
                     (selectable ? '<input type="checkbox" class="lisun-impact-check" data-post-id="' + escAttr(item.post_id) + '" title="勾选后可批量应用到这篇" ' + (selectedPostIds[item.post_id] ? 'checked' : '') + '>' : '') +
@@ -1236,14 +1248,14 @@ jQuery(function ($) {
                         (!applied && !hasVisibleAudit && appliedHitCount && unappliedCount ? '<span class="lisun-impact-badge is-applied">已应用 ' + appliedHitCount + ' 处</span>' : '') +
                         (processCount ? '<span class="lisun-impact-badge is-warning">' + processLabel + processCount + ' 处</span>' : '') +
                     '</span>' +
-                    (applied ? undoButton : '<button type="button" class="lisun-impact-single lisun-apply-single" data-post-id="' + escAttr(item.post_id) + '" data-retry-label="' + escAttr(singleButtonText) + '">' + escHtml(singleButtonText) + '</button>') +
+                    actionHtml +
                 '</summary>' +
                 '<div class="lisun-impact-article-content">' +
                     '<div class="lisun-impact-tabs">' +
                         '<button type="button" class="lisun-impact-tab is-active" data-panel="context">命中上下文 ' + contexts.length + '</button>' +
                         '<button type="button" class="lisun-impact-tab lisun-application-history" data-panel="history" data-post-id="' + escAttr(item.post_id) + '">应用记录</button>' +
                     '</div>' +
-                    ((localOnly || incomplete || hardVisibleFailure) && item.last_error ? '<div class="lisun-impact-panel" style="border-left:3px solid #d63638;color:#8a2424;">' + escHtml(item.last_error) + '</div>' : '') +
+                    ((localOnly || incomplete || hardVisibleFailure) && item.last_error ? '<div class="lisun-impact-panel" style="' + errorPanelStyle + '">' + escHtml(item.last_error) + '</div>' : '') +
                     escUnappliedMatches(item) +
                     '<div class="lisun-impact-panel lisun-impact-context-panel">' + escContexts(item).replace(/^<div class="lisun-impact-panel lisun-impact-context-panel">|<\/div>$/g, '') + '</div>' +
                     '<div class="lisun-application-history-box lisun-impact-panel" style="display:none;"></div>' +
@@ -1260,6 +1272,10 @@ jQuery(function ($) {
             var status = labels[item.status] || labels[item.batch_status] || item.status || '—';
             if (item.undone) {
                 status = item.remote_sync_status === 'pending' ? '已撤销（远程待同步）' : '已撤销';
+            } else if (item.local_only) {
+                // The English copy was updated here; only the remote push did
+                // not run. Showing this as 「失败」 misreports the local state.
+                status = '本地已应用（远程未同步）';
             }
             var warningOnly = item.warning_only || (item.post_apply_audit && (item.post_apply_audit.term_count_warning || parseInt(item.post_apply_audit.visible_missing_count || 0, 10) > 0));
             if (warningOnly && status === '已完成') status += '（有警告）';
@@ -1315,7 +1331,7 @@ jQuery(function ($) {
                 html += '<tr><td colspan="5"><details><summary>查看本批次明细（' + item.applications.length + ' 篇）</summary><ul style="margin:6px 0 0 18px;">';
                 $.each(item.applications, function (_, application) {
                     var appStatus = (application.local_only || (application.status === 'done' && application.pushed === false))
-                        ? '失败（本地已更新，远程待重推）'
+                        ? '本地已应用（远程未同步）'
                         : (application.status === 'done' ? '已完成' : '失败');
                     var appText = '#' + escHtml(application.post_id) + ' ' + escHtml(application.title || '') +
                         '：' + appStatus + '，更新 ' + escHtml(application.updated || 0) + '，复用 ' + escHtml(application.reused_units || 0) +
