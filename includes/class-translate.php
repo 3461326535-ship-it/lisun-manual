@@ -3652,6 +3652,28 @@ class Lisun_Manual_Translate {
             return ['job_id' => $job->id, 'post_id' => $post_id, 'status' => 'skipped'];
         }
 
+        // 任务类型白名单。action=push 的纯推送任务已随「保存即推送」一起下线，
+        // 但历史记录可能还留在队列里：不拦的话它会落到下面的 else 分支被当成
+        // 一次完整翻译执行——静默消耗翻译额度、改写已有译文，失败时还会把本来
+        // 已经 synced 的页面标成失败。这里按无效任务归档，不碰页面状态。
+        if (!in_array((string) $job->action, ['translate', 'retranslate', 'glossary_apply'], true)) {
+            $wpdb->update($table, [
+                'status'      => 'done',
+                'error_msg'   => 'unsupported action, skipped',
+                'result_json' => wp_json_encode([
+                    'skipped' => true,
+                    'reason'  => 'unsupported action',
+                    'action'  => (string) $job->action,
+                ]),
+                'updated_at'  => current_time('mysql'),
+            ], ['id' => $job->id]);
+            self::debug_log('worker job SKIP reason=unsupported_action job=' . intval($job->id)
+                . ' action=' . (string) $job->action);
+            self::release_worker_slot();
+            self::$current_job_id = 0;
+            return ['job_id' => $job->id, 'post_id' => $post_id, 'status' => 'skipped'];
+        }
+
         // 每个任务先重置重译标志，避免 worker-loop 连续处理多篇时标志串到下一篇
         self::$force_retranslate = false;
 

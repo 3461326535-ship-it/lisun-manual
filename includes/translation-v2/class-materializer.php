@@ -315,7 +315,6 @@ class Lisun_Manual_V2_Materializer {
         if (!is_array($parts)) return (string) $text;
 
         $result = '';
-        $last_was_term = false;
         $part_count = count($parts);
         // Use indexed access instead of foreach values here.  The next text
         // part may be trimmed when it duplicates a rendered term; that
@@ -338,12 +337,10 @@ class Lisun_Manual_V2_Materializer {
                     );
                 }
                 $result .= $value;
-                $last_was_term = true;
                 continue;
             }
 
             $result .= $part;
-            $last_was_term = false;
         }
         return $result;
     }
