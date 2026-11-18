@@ -2603,11 +2603,11 @@ class Lisun_Manual_Glossary_Apply {
                 // 但必须在前端明确提示，恢复前置版本会覆盖应用后的译文。
                 $applications[$i]['undo_warning'] = '应用后已有新翻译，撤销会恢复应用前版本并覆盖之后的译文';
             }
-            if ($local_only && $applications[$i]['undo_warning'] === '') {
-                // Undo already rolled the local copy back, but the remote site
-                // was never updated by this apply, so undoing it cannot make
-                // the remote worse — it still needs a later push.
-                $applications[$i]['undo_warning'] = '本次应用仅本地生效、远程未同步；撤销会恢复到应用前版本，之后仍需推送';
+            if ($local_only) {
+                // Informational only: this must not travel as undo_warning,
+                // because the UI uses that flag to warn about overwriting a
+                // newer translation, which is not what happened here.
+                $applications[$i]['undo_note'] = '本次应用仅本地生效、远程未同步；撤销会恢复到应用前版本，之后仍需推送';
             }
             $prev = Lisun_Manual_V2_Repository::previous_revision_id($post_id, $applied_rev);
             if ($prev <= 0) {

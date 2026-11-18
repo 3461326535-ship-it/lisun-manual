@@ -1223,7 +1223,7 @@ jQuery(function ($) {
             // the remote push, which undo does not depend on.
             var undoButton = '';
             if ((applied || localOnly) && application.undo_available && application.applied_revision_id) {
-                undoButton = '<button type="button" class="lisun-impact-single lisun-undo-apply" data-post-id="' + escAttr(item.post_id) + '" data-batch-id="' + escAttr(application._batch_id || '') + '" data-revision="' + escAttr(application.applied_revision_id) + '" data-has-newer="' + (application.undo_warning ? '1' : '0') + '" title="' + escAttr(application.undo_warning || '撤销并恢复到应用前版本') + '" style="color:#b32d2e;border-color:#f3b9bb;background:#fff5f5;">撤销此篇</button>';
+                undoButton = '<button type="button" class="lisun-impact-single lisun-undo-apply" data-post-id="' + escAttr(item.post_id) + '" data-batch-id="' + escAttr(application._batch_id || '') + '" data-revision="' + escAttr(application.applied_revision_id) + '" data-has-newer="' + (application.undo_warning ? '1' : '0') + '" title="' + escAttr(application.undo_warning || application.undo_note || '撤销并恢复到应用前版本') + '" style="color:#b32d2e;border-color:#f3b9bb;background:#fff5f5;">撤销此篇</button>';
             } else if (applied && application.undo_reason) {
                 undoButton = '<span class="lisun-impact-single" style="font-size:11px;color:#888;" title="' + escAttr(application.undo_reason) + '">' + escHtml(application.undo_reason) + '</span>';
             }
