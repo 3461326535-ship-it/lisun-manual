@@ -36,7 +36,7 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
             if (is_wp_error($restored)) {
                 return new WP_Error(
                     'llm_lab_restore_failed',
-                    'LLM ��������δͨ�� V2 ��ǩ/����ê��У�飺' . $restored->get_error_message(),
+                    'LLM 返回内容未通过 V2 标签/术语锚点校验：' . $restored->get_error_message(),
                     ['unit_key' => (string) ($prepared['unit']['unit_key'] ?? '')]
                 );
             }
@@ -55,10 +55,10 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
     private function request_unit($prepared, $post_id, $index) {
         $config = $this->config();
         if ($config['api_key'] === '') {
-            return new WP_Error('llm_lab_key_missing', 'LLM ʵ�� API Key δ����');
+            return new WP_Error('llm_lab_key_missing', 'LLM 实验 API Key 未配置');
         }
         if ($config['api_url'] === '' || $config['model'] === '') {
-            return new WP_Error('llm_lab_config_missing', 'LLM ʵ�� API ��ַ��ģ��δ����');
+            return new WP_Error('llm_lab_config_missing', 'LLM 实验 API 地址或模型未配置');
         }
 
         $xml = (string) ($prepared['xml'] ?? '');
@@ -87,18 +87,18 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         $data = json_decode((string) wp_remote_retrieve_body($response), true);
         if ($status < 200 || $status >= 300) {
             $message = (string) ($data['error']['message'] ?? ('HTTP ' . $status));
-            return new WP_Error('llm_lab_http_error', 'LLM ʵ������ʧ�ܣ�' . $message);
+            return new WP_Error('llm_lab_http_error', 'LLM 实验请求失败：' . $message);
         }
 
         $finish = (string) ($data['choices'][0]['finish_reason'] ?? '');
         if ($finish === 'length') {
-            return new WP_Error('llm_lab_truncated', 'LLM �����򳤶����Ʊ��ضϣ���ǰ��Ԫδ����');
+            return new WP_Error('llm_lab_truncated', 'LLM 返回因长度限制被截断，当前单元未保存');
         }
         $content = trim((string) ($data['choices'][0]['message']['content'] ?? ''));
         $content = preg_replace('/^```(?:xml)?\s*|\s*```$/i', '', $content);
         $content = trim((string) $content);
         if ($content === '' || strpos($content, '<lisun-unit') === false) {
-            return new WP_Error('llm_lab_non_xml', 'LLM û�з���Ԥ�ڵ� lisun-unit XML����ǰ��Ԫδ����');
+            return new WP_Error('llm_lab_non_xml', 'LLM 没有返回预期的 lisun-unit XML，当前单元未保存');
         }
         return $content;
     }
@@ -140,4 +140,3 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         ];
     }
 }
-
