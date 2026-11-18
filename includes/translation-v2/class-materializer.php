@@ -365,6 +365,9 @@ class Lisun_Manual_V2_Materializer {
                 }
             }
             $result .= $part;
+            // 普通文本段之后必须复位：补空格只对紧跟在术语槽位后面的那一段
+            // 生效，否则后续段落也会被当成“紧跟术语”而重复判断。
+            $last_was_term = false;
         }
         return $result;
     }
