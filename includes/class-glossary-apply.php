@@ -2455,7 +2455,12 @@ class Lisun_Manual_Glossary_Apply {
                 $matched = (string) ($part['source_text'] ?? '');
                 $before_len = 70;
                 $after_len = 90;
-                $before = mb_substr($source, max(0, $offset - $before_len), $before_len);
+                $before_start = max(0, $offset - $before_len);
+                // The prefix must end exactly where the matched term starts.
+                // Using a fixed $before_len when the match is near the start
+                // also captured text after the term, then $after appended that
+                // same text again and made the context sentence look repeated.
+                $before = mb_substr($source, $before_start, $offset - $before_start);
                 $after = mb_substr($source, $offset + mb_strlen($matched), $after_len);
                 $prefix = $offset > $before_len ? '…' : '';
                 $suffix = mb_strlen($source) > $offset + mb_strlen($matched) + $after_len ? '…' : '';
