@@ -1,6 +1,6 @@
 <?php
 /**
- * ��������ҳ�� �� ����ҳ
+ * 术语库管理页面 — 含分页
  */
 
 if (!defined('ABSPATH')) {
@@ -10,14 +10,14 @@ if (!defined('ABSPATH')) {
 $glossary = Lisun_Manual_Glossary::get_all();
 $trash_count = count(Lisun_Manual_Glossary::get_trash());
 
-// ������ȷ��������
+// 防御：确保是数组
 if (!is_array($glossary)) {
     $decoded = json_decode($glossary, true);
     $glossary = is_array($decoded) ? $decoded : [];
     update_option('lisun_glossary', $glossary);
 }
 
-// Ĭ�ϰ�����ʱ�䵹���¼ӵ��ŵ�һҳ������ֱ�ӵ��ԣ�ͬһ���ӵ���ǰ�档
+// 默认按添加时间倒序：新加的排第一页，方便直接调试；同一天后加的排前面。
 $_indexed = [];
 foreach ($glossary as $_idx => $_row) {
     $_indexed[] = ['idx' => $_idx, 'item' => $_row];
@@ -37,152 +37,152 @@ $total_pages  = max(1, (int) ceil($total / $per_page));
 $current_page = 1;
 $items        = array_slice($glossary, 0, $per_page);
 
-// ��ǰҳ���ݵ�ȫ��������㣨�к��ã�
+// 当前页数据的全局索引起点（行号用）
 $start_index = 0;
 $deepl_state = Lisun_Manual_Glossary::get_deepl_status();
 $deepl_enabled = Lisun_Manual_Glossary::is_enabled();
 $deepl_last_error = $deepl_enabled ? (string) ($deepl_state['last_error'] ?? '') : '';
 $deepl_synced_at = (int) ($deepl_state['synced_at'] ?? 0);
 $deepl_status_labels = [
-    'synced' => '��ͬ��',
-    'pending' => '��ͬ��',
-    'error' => 'ͬ��ʧ��',
-    'empty' => '���������Ϊ��',
-    'disabled' => '�ѹر�',
+    'synced' => '已同步',
+    'pending' => '待同步',
+    'error' => '同步失败',
+    'empty' => '本地术语表为空',
+    'disabled' => '已关闭',
 ];
-$deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '��ͬ��';
+$deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '待同步';
 ?>
 
 <div class="wrap">
-    <h1 class="wp-heading-inline"><?php _e('�����', 'lisun-manual'); ?></h1>
+    <h1 class="wp-heading-inline"><?php _e('术语库', 'lisun-manual'); ?></h1>
     <hr class="wp-header-end">
 
-    <!-- ������ -->
+    <!-- 操作栏 -->
     <div class="lisun-table-actions">
         <div class="lisun-search">
-            <input type="text" id="lisun-glossary-search" class="regular-text" placeholder="<?php esc_attr_e('��������...', 'lisun-manual'); ?>">
-            <button type="button" class="button" id="lisun-search-btn"><?php _e('����', 'lisun-manual'); ?></button>
-            <button type="button" class="button" id="lisun-search-clear" style="display:none;"><?php _e('���', 'lisun-manual'); ?></button>
+            <input type="text" id="lisun-glossary-search" class="regular-text" placeholder="<?php esc_attr_e('搜索术语...', 'lisun-manual'); ?>">
+            <button type="button" class="button" id="lisun-search-btn"><?php _e('搜索', 'lisun-manual'); ?></button>
+            <button type="button" class="button" id="lisun-search-clear" style="display:none;"><?php _e('清除', 'lisun-manual'); ?></button>
         </div>
         <div class="lisun-actions-right">
             <button type="button" class="button button-primary" id="lisun-add-glossary-btn">
-                <?php _e('��������', 'lisun-manual'); ?>
+                <?php _e('添加术语', 'lisun-manual'); ?>
             </button>
             <label class="button" for="lisun-glossary-csv-input">
-                <?php _e('���� CSV', 'lisun-manual'); ?>
+                <?php _e('导入 CSV', 'lisun-manual'); ?>
             </label>
             <input type="file" id="lisun-glossary-csv-input" accept=".csv" style="display:none;">
             <button type="button" class="button" id="lisun-export-glossary">
-                <?php _e('���� CSV', 'lisun-manual'); ?>
+                <?php _e('导出 CSV', 'lisun-manual'); ?>
             </button>
             <button type="button" class="button" id="lisun-push-glossary-en"
-                    title="<?php esc_attr_e('����ǰ��������͵�Զ��վ', 'lisun-manual'); ?>">
-                <?php _e('���͵�Զ��վ', 'lisun-manual'); ?>
+                    title="<?php esc_attr_e('将当前术语库推送到远程站', 'lisun-manual'); ?>">
+                <?php _e('推送到远程站', 'lisun-manual'); ?>
             </button>
             <button type="button" class="button" id="lisun-pull-glossary-en"
-                    title="<?php esc_attr_e('��Զ��վ��ȡ������滻��ǰ�����', 'lisun-manual'); ?>">
-                <?php _e('��Զ��վ��ȡ', 'lisun-manual'); ?>
+                    title="<?php esc_attr_e('从远程站拉取术语库替换当前术语库', 'lisun-manual'); ?>">
+                <?php _e('从远程站拉取', 'lisun-manual'); ?>
             </button>
             <button type="button" class="button button-primary" id="lisun-sync-sheets"
                     style="background:#0f9d58;border-color:#0f9d58;color:#fff;"
-                    title="<?php esc_attr_e('�� Google Sheets ͬ�������', 'lisun-manual'); ?>">
-                <?php _e('�� Google Sheets ͬ��', 'lisun-manual'); ?>
+                    title="<?php esc_attr_e('从 Google Sheets 同步术语库', 'lisun-manual'); ?>">
+                <?php _e('从 Google Sheets 同步', 'lisun-manual'); ?>
             </button>
             <button type="button" class="button" id="lisun-open-glossary-trash">
-                ����վ<?php echo $trash_count ? ' (' . (int) $trash_count . ')' : ''; ?>
+                回收站<?php echo $trash_count ? ' (' . (int) $trash_count . ')' : ''; ?>
             </button>
         </div>
     </div>
 
     <div id="lisun-glossary-trash-panel" style="display:none;background:#fff;border:1px solid #dcdcde;margin:10px 0 15px;padding:14px 16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;">
-            <h2 style="margin:0;font-size:16px;">�������վ</h2>
-            <button type="button" class="button" id="lisun-close-glossary-trash">�ر�</button>
+            <h2 style="margin:0;font-size:16px;">术语回收站</h2>
+            <button type="button" class="button" id="lisun-close-glossary-trash">关闭</button>
         </div>
-        <p id="lisun-glossary-trash-note" style="margin:0 0 10px;color:#646970;">ɾ��������ᱣ�� 30 �죬�ڼ���Իָ���</p>
+        <p id="lisun-glossary-trash-note" style="margin:0 0 10px;color:#646970;">删除的术语会保留 30 天，期间可以恢复。</p>
         <table class="widefat striped">
-            <thead><tr><th>��������</th><th>Ӣ���뷨</th><th>��� �� ��Χ</th><th>ɾ��ʱ��</th><th>�Զ�ɾ������</th><th>����</th></tr></thead>
-            <tbody id="lisun-glossary-trash-tbody"><tr><td colspan="6" style="text-align:center;color:#999;">���ڼ��ء�</td></tr></tbody>
+            <thead><tr><th>中文术语</th><th>英文译法</th><th>类别 · 范围</th><th>删除时间</th><th>自动删除日期</th><th>操作</th></tr></thead>
+            <tbody id="lisun-glossary-trash-tbody"><tr><td colspan="6" style="text-align:center;color:#999;">正在加载…</td></tr></tbody>
         </table>
     </div>
 
     <div id="lisun-deepl-glossary-status" style="margin:10px 0 15px;padding:10px 12px;background:#fff;border:1px solid #dcdcde;border-left:4px solid <?php echo $deepl_last_error !== '' ? '#d63638' : ($deepl_enabled ? '#2271b1' : '#888'); ?>;">
-        <strong>DeepL Glossary��<?php echo esc_html($deepl_status); ?></strong>
+        <strong>DeepL Glossary：<?php echo esc_html($deepl_status); ?></strong>
         <?php if (!$deepl_enabled): ?>
-            <span style="margin-left:12px;color:#666;">����ʱ����ʹ���κ������</span>
+            <span style="margin-left:12px;color:#666;">翻译时不会使用任何术语表</span>
         <?php endif; ?>
         <?php if (!empty($deepl_state['glossary_id'])): ?>
-            <span style="margin-left:12px;color:#666;">���� <?php echo (int) ($deepl_state['entry_count'] ?? 0); ?> ����ID β�� <?php echo esc_html(substr((string) $deepl_state['glossary_id'], -8)); ?></span>
+            <span style="margin-left:12px;color:#666;">术语 <?php echo (int) ($deepl_state['entry_count'] ?? 0); ?> 条，ID 尾号 <?php echo esc_html(substr((string) $deepl_state['glossary_id'], -8)); ?></span>
         <?php endif; ?>
         <?php if ($deepl_synced_at): ?>
-            <span style="margin-left:12px;color:#666;">���ͬ����<?php echo esc_html(wp_date('Y-m-d H:i:s', $deepl_synced_at)); ?></span>
+            <span style="margin-left:12px;color:#666;">最近同步：<?php echo esc_html(wp_date('Y-m-d H:i:s', $deepl_synced_at)); ?></span>
         <?php endif; ?>
         <?php if ($deepl_last_error !== ''): ?>
-            <div style="margin-top:5px;color:#d63638;">�������<?php echo esc_html($deepl_last_error); ?></div>
+            <div style="margin-top:5px;color:#d63638;">最近错误：<?php echo esc_html($deepl_last_error); ?></div>
         <?php endif; ?>
-        <button type="button" class="button" id="lisun-check-deepl" style="margin-top:8px;" <?php echo !$deepl_enabled ? 'disabled title="������ϵͳ���������������"' : ''; ?>><?php echo $deepl_enabled ? 'DeepL ���Ӽ�� / �޸�' : '������ѹر�'; ?></button>
+        <button type="button" class="button" id="lisun-check-deepl" style="margin-top:8px;" <?php echo !$deepl_enabled ? 'disabled title="请先在系统设置中启用术语表"' : ''; ?>><?php echo $deepl_enabled ? 'DeepL 连接检测 / 修复' : '术语表已关闭'; ?></button>
     </div>
 
-    <!-- ����/�༭������Ĭ�����أ� -->
+    <!-- 添加/编辑表单（默认隐藏） -->
     <div id="lisun-glossary-form" style="display:none; background:#fff; border:1px solid #ddd; padding:15px; margin-bottom:15px;">
-        <h3 id="lisun-form-title"><?php _e('��������', 'lisun-manual'); ?></h3>
+        <h3 id="lisun-form-title"><?php _e('添加术语', 'lisun-manual'); ?></h3>
         <input type="hidden" id="lisun-glossary-index" value="-1">
         <input type="hidden" id="lisun-glossary-term-id" value="">
         <table class="form-table">
             <tr>
-                <th><label for="lisun-glossary-zh"><?php _e('��������', 'lisun-manual'); ?></label></th>
+                <th><label for="lisun-glossary-zh"><?php _e('中文术语', 'lisun-manual'); ?></label></th>
                 <td><input type="text" id="lisun-glossary-zh" class="regular-text" required></td>
             </tr>
             <tr>
-                <th><label for="lisun-glossary-en"><?php _e('Ӣ���뷨', 'lisun-manual'); ?></label></th>
+                <th><label for="lisun-glossary-en"><?php _e('英文译法', 'lisun-manual'); ?></label></th>
                 <td><input type="text" id="lisun-glossary-en" class="regular-text" required></td>
             </tr>
             <tr>
-                <th><label for="lisun-glossary-category"><?php _e('�������', 'lisun-manual'); ?></label></th>
+                <th><label for="lisun-glossary-category"><?php _e('术语类别', 'lisun-manual'); ?></label></th>
                 <td>
                     <select id="lisun-glossary-category" class="regular-text">
-                        <option value="manual">�ֶ�����רҵ����</option>
-                        <option value="erp">ERP��Ʒ����</option>
-                        <option value="custom">�Զ���</option>
+                        <option value="manual">手动添加专业名词</option>
+                        <option value="erp">ERP产品名称</option>
+                        <option value="custom">自定义</option>
                     </select>
-                    <p class="description">���ֻ�����������Ĭ�Ϸ�Χ��������ʵ��ѡ�����ȣ�����ͬ�����ᰴ��𸲸ǡ�</p>
+                    <p class="description">类别只决定新术语的默认范围；保存后的实际选择优先，后续同步不会按类别覆盖。</p>
                 </td>
             </tr>
             <tr>
-                <th><label for="lisun-glossary-scope"><?php _e('���÷�Χ', 'lisun-manual'); ?></label></th>
+                <th><label for="lisun-glossary-scope"><?php _e('适用范围', 'lisun-manual'); ?></label></th>
                 <td>
                     <select id="lisun-glossary-scope" class="regular-text">
-                        <option value="global">ȫ��ʹ��</option>
-                        <option value="article">ָ������</option>
+                        <option value="global">全局使用</option>
+                        <option value="article">指定文章</option>
                     </select>
-                    <p class="description">��������ɸ������Ĭ��ֵ��ָ�����µ�������������ҳ��ѡ���������¡�</p>
+                    <p class="description">单条术语可覆盖类别默认值；指定文章的术语需在详情页勾选到具体文章。</p>
                 </td>
             </tr>
             <tr>
-                <th><label for="lisun-glossary-note"><?php _e('��ע', 'lisun-manual'); ?></label></th>
-                <td><input type="text" id="lisun-glossary-note" class="regular-text" placeholder="�Զ��屸ע����ѡ��"></td>
+                <th><label for="lisun-glossary-note"><?php _e('备注', 'lisun-manual'); ?></label></th>
+                <td><input type="text" id="lisun-glossary-note" class="regular-text" placeholder="自定义备注（可选）"></td>
             </tr>
         </table>
         <p>
-            <button type="button" class="button button-primary" id="lisun-save-glossary-btn"><?php _e('����', 'lisun-manual'); ?></button>
-            <button type="button" class="button" id="lisun-cancel-glossary-btn"><?php _e('ȡ��', 'lisun-manual'); ?></button>
+            <button type="button" class="button button-primary" id="lisun-save-glossary-btn"><?php _e('保存', 'lisun-manual'); ?></button>
+            <button type="button" class="button" id="lisun-cancel-glossary-btn"><?php _e('取消', 'lisun-manual'); ?></button>
         </p>
     </div>
 
-    <!-- CSV Ԥ�� -->
+    <!-- CSV 预览 -->
     <div class="lisun-csv-preview"></div>
 
-    <!-- �����б� -->
+    <!-- 术语列表 -->
     <table class="wp-list-table widefat fixed striped">
         <thead>
             <tr>
                 <th width="4%">#</th>
-                <th width="20%"><?php _e('��������', 'lisun-manual'); ?></th>
-                <th width="20%"><?php _e('Ӣ���뷨', 'lisun-manual'); ?></th>
-                <th width="16%"><?php _e('��� �� ��Χ', 'lisun-manual'); ?></th>
-                <th width="10%"><?php _e('��������', 'lisun-manual'); ?></th>
-                <th width="14%"><?php _e('���Ӧ��', 'lisun-manual'); ?></th>
-                <th width="16%"><?php _e('����', 'lisun-manual'); ?></th>
+                <th width="20%"><?php _e('中文术语', 'lisun-manual'); ?></th>
+                <th width="20%"><?php _e('英文译法', 'lisun-manual'); ?></th>
+                <th width="16%"><?php _e('类别 · 范围', 'lisun-manual'); ?></th>
+                <th width="10%"><?php _e('导入日期', 'lisun-manual'); ?></th>
+                <th width="14%"><?php _e('最近应用', 'lisun-manual'); ?></th>
+                <th width="16%"><?php _e('操作', 'lisun-manual'); ?></th>
             </tr>
         </thead>
         <tbody id="lisun-glossary-tbody">
@@ -204,8 +204,8 @@ $deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '�
                         <?php
                         $cat_label = Lisun_Manual_Glossary::category_label($item['category'] ?? '');
                         $scope_label = Lisun_Manual_Glossary::scope_label($item['scope'] ?? '');
-                        $note_extra = !empty($item['note']) ? '��' . esc_html($item['note']) . '��' : '';
-                        echo esc_html($cat_label) . ' �� ' . esc_html($scope_label) . $note_extra;
+                        $note_extra = !empty($item['note']) ? '（' . esc_html($item['note']) . '）' : '';
+                        echo esc_html($cat_label) . ' · ' . esc_html($scope_label) . $note_extra;
                         ?>
                     </td>
                     <td class="lisun-cell-import-date"><?php echo esc_html($item['import_date'] ?? (date('Y') . '/09/21')); ?></td>
@@ -213,8 +213,8 @@ $deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '�
                         <?php $latest_apply = Lisun_Manual_Glossary_Apply::latest_for_term($item['term_id'] ?? ''); ?>
                         <?php if ($latest_apply): ?>
                             <?php
-                            $latest_status_labels = ['queued' => '�Ŷ���', 'processing' => '������', 'done' => '�����', 'finished_with_errors' => '����ʧ��', 'failed' => 'ʧ��', 'stale' => '������Ӧ��'];
-                            $latest_status = $latest_status_labels[$latest_apply['status'] ?? ''] ?? (string) ($latest_apply['status'] ?? '��');
+                            $latest_status_labels = ['queued' => '排队中', 'processing' => '处理中', 'done' => '已完成', 'finished_with_errors' => '部分失败', 'failed' => '失败', 'stale' => '待重新应用'];
+                            $latest_status = $latest_status_labels[$latest_apply['status'] ?? ''] ?? (string) ($latest_apply['status'] ?? '—');
                             $effective_count = (int) ($latest_apply['total_jobs'] ?? 0);
                             if ($effective_count === 0) {
                                 $_det = json_decode((string) ($latest_apply['details_json'] ?? ''), true);
@@ -227,27 +227,27 @@ $deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '�
                                 $effective_count = (int) $latest_apply['current_applied_count'];
                             }
                             if ($effective_count === 0 && in_array((string) ($latest_apply['status'] ?? ''), ['done', 'finished_with_errors'], true)) {
-                                $latest_status = '������Ӧ��';
+                                $latest_status = '待重新应用';
                             }
                             ?>
                             <div class="lisun-recent-apply-summary">
                                 <span class="lisun-recent-apply-time"><?php echo esc_html((string) $latest_apply['created_at']); ?></span>
                             </div>
-                            <div class="lisun-recent-apply-status"><?php echo esc_html($latest_status); ?> �� <?php echo $effective_count; ?> ƪ</div>
-                            <button type="button" class="lisun-recent-apply-toggle" data-term-id="<?php echo esc_attr($item['term_id'] ?? ''); ?>">չ��?</button>
+                            <div class="lisun-recent-apply-status"><?php echo esc_html($latest_status); ?> · <?php echo $effective_count; ?> 篇</div>
+                            <button type="button" class="lisun-recent-apply-toggle" data-term-id="<?php echo esc_attr($item['term_id'] ?? ''); ?>">展开⌄</button>
                         <?php else: ?>
-                            <span style="color:#999;">δӦ��</span>
+                            <span style="color:#999;">未应用</span>
                         <?php endif; ?>
                     </td>
                     <td class="lisun-row-actions">
                         <span class="lisun-view-btns">
-                            <button type="button" class="button button-small lisun-edit-glossary"><?php _e('�༭', 'lisun-manual'); ?></button>
-                            <button type="button" class="button button-small lisun-glossary-impact"><?php _e('�鿴Ӱ��', 'lisun-manual'); ?></button>
-                            <button type="button" class="button button-small lisun-delete-glossary" style="color:#d63638;"><?php _e('ɾ��', 'lisun-manual'); ?></button>
+                            <button type="button" class="button button-small lisun-edit-glossary"><?php _e('编辑', 'lisun-manual'); ?></button>
+                            <button type="button" class="button button-small lisun-glossary-impact"><?php _e('查看影响', 'lisun-manual'); ?></button>
+                            <button type="button" class="button button-small lisun-delete-glossary" style="color:#d63638;"><?php _e('删除', 'lisun-manual'); ?></button>
                         </span>
                         <span class="lisun-edit-btns" style="display:none;">
-                            <button type="button" class="button button-small button-primary lisun-save-glossary"><?php _e('����', 'lisun-manual'); ?></button>
-                            <button type="button" class="button button-small lisun-cancel-edit"><?php _e('ȡ��', 'lisun-manual'); ?></button>
+                            <button type="button" class="button button-small button-primary lisun-save-glossary"><?php _e('保存', 'lisun-manual'); ?></button>
+                            <button type="button" class="button button-small lisun-cancel-edit"><?php _e('取消', 'lisun-manual'); ?></button>
                         </span>
                     </td>
                 </tr>
@@ -258,15 +258,15 @@ $deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '�
                 <?php endif; ?>
                 <?php endforeach; ?>
             <?php else: ?>
-                <tr><td colspan="7" style="text-align:center;color:#999;"><?php _e('�����Ϊ��', 'lisun-manual'); ?></td></tr>
+                <tr><td colspan="7" style="text-align:center;color:#999;"><?php _e('术语库为空', 'lisun-manual'); ?></td></tr>
             <?php endif; ?>
         </tbody>
     </table>
 
-    <!-- ��ҳ -->
+    <!-- 分页 -->
     <div class="lisun-pagination-bar" style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;">
         <div class="lisun-pagination-info">
-            <?php _e('��', 'lisun-manual'); ?> <strong id="lisun-glossary-count"><?php echo $total; ?></strong> <?php _e('������', 'lisun-manual'); ?>
+            <?php _e('共', 'lisun-manual'); ?> <strong id="lisun-glossary-count"><?php echo $total; ?></strong> <?php _e('条术语', 'lisun-manual'); ?>
             <span id="lisun-page-info" style="margin-left:12px;color:#666;"></span>
         </div>
         <div class="lisun-pagination-pages" id="lisun-pagination-pages">
@@ -281,7 +281,7 @@ $deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '�
                     echo '<button type="button" class="button button-small lisun-page-num' . $active . '" data-page="' . $p . '">' . $p . '</button>';
                 }
             } else {
-                // ʼ����ʾ��1 ... �м� ... N
+                // 始终显示：1 ... 中间 ... N
                 for ($p = 1; $p <= $total_pages; $p++) {
                     if ($p === 1 || $p === $total_pages || ($p >= $current_page - 1 && $p <= $current_page + 1)) {
                         $active = $p === 1 ? ' button-primary' : '';
@@ -333,8 +333,8 @@ $deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '�
         .lisun-impact-article { margin-top:9px; background:#fff; border:1px solid #d8dde3; border-radius:11px; overflow:hidden; }
         .lisun-impact-article > summary { display:flex; align-items:center; gap:8px; padding:12px 13px; cursor:pointer; list-style:none; }
         .lisun-impact-article > summary::-webkit-details-marker { display:none; }
-        .lisun-impact-article > summary:before { content:'?'; width:12px; color:#777; font-size:13px; text-align:center; }
-        .lisun-impact-article[open] > summary:before { content:'?'; }
+        .lisun-impact-article > summary:before { content:'⌄'; width:12px; color:#777; font-size:13px; text-align:center; }
+        .lisun-impact-article[open] > summary:before { content:'⌃'; }
         .lisun-impact-article-title { min-width:0; flex:1; font-size:13px; }
         .lisun-impact-article-title strong { margin-right:7px; color:#8a9198; font-weight:400; }
         .lisun-impact-badges { display:flex; align-items:center; gap:5px; flex-shrink:0; }
@@ -443,20 +443,20 @@ $deepl_status = $deepl_status_labels[$deepl_state['status'] ?? 'pending'] ?? '�
     <div id="lisun-glossary-impact-modal">
         <div class="lisun-impact-dialog">
             <div class="lisun-impact-head">
-                <h2 class="lisun-impact-title"><span class="lisun-impact-title-icon">?</span>����Ӱ�췶Χ</h2>
-                <span id="lisun-glossary-term-pill" class="lisun-impact-term">��</span>
-                <button type="button" class="lisun-impact-close-x" id="lisun-glossary-impact-close" aria-label="�ر�">��</button>
+                <h2 class="lisun-impact-title"><span class="lisun-impact-title-icon">⌘</span>术语影响范围</h2>
+                <span id="lisun-glossary-term-pill" class="lisun-impact-term">—</span>
+                <button type="button" class="lisun-impact-close-x" id="lisun-glossary-impact-close" aria-label="关闭">×</button>
             </div>
             <div id="lisun-glossary-summary" class="lisun-impact-summary"></div>
             <div id="lisun-glossary-history" class="lisun-impact-global-history"></div>
-            <div id="lisun-glossary-impact-body" class="lisun-impact-body">����ɨ�衭</div>
+            <div id="lisun-glossary-impact-body" class="lisun-impact-body">正在扫描…</div>
             <div class="lisun-impact-footer">
                 <p id="lisun-glossary-batch-status"></p>
                 <div id="lisun-glossary-batch-errors"></div>
-                <button type="button" class="button button-primary" id="lisun-glossary-apply-confirm" disabled>ȷ�ϲ�ȫ�ָ�����������</button>
-                <button type="button" class="button lisun-manual-unlock" id="lisun-glossary-manual-unlock" style="display:none;">�˹�����������Ӧ��</button>
-                <button type="button" class="button" id="lisun-glossary-apply-retry" style="display:none;">����ʧ������</button>
-                <button type="button" class="button" id="lisun-glossary-impact-close-footer">�ر�</button>
+                <button type="button" class="button button-primary" id="lisun-glossary-apply-confirm" disabled>确认并全局更新现有译文</button>
+                <button type="button" class="button lisun-manual-unlock" id="lisun-glossary-manual-unlock" style="display:none;">人工解锁并重新应用</button>
+                <button type="button" class="button" id="lisun-glossary-apply-retry" style="display:none;">重试失败任务</button>
+                <button type="button" class="button" id="lisun-glossary-impact-close-footer">关闭</button>
             </div>
         </div>
     </div>
@@ -474,10 +474,10 @@ jQuery(function ($) {
     // admin-ajax enqueue is blocked (CDN/WAF) or rejected on that install.
     var restBase     = '<?php echo esc_js(rest_url('lisun-manual/v1')); ?>';
     var restNonce    = '<?php echo wp_create_nonce('wp_rest'); ?>';
-    var CAT_LABELS   = {manual: '�ֶ�����רҵ����', erp: 'ERP��Ʒ����', custom: '�Զ���'};
-    var SCOPE_LABELS = {global: 'ȫ��ʹ��', article: 'ָ������'};
+    var CAT_LABELS   = {manual: '手动添加专业名词', erp: 'ERP产品名称', custom: '自定义'};
+    var SCOPE_LABELS = {global: '全局使用', article: '指定文章'};
 
-    // HTML ת��
+    // HTML 转义
     function escHtml(str) {
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
@@ -488,12 +488,12 @@ jQuery(function ($) {
         if (data && data.message) return data.message;
         var issues = (data && data.issues) || [];
         return $.map(issues, function (issue) {
-            return (issue.row ? '�� ' + issue.row + ' �У�' : '') + (issue.message || '������ڹ�ϵ��ͻ');
+            return (issue.row ? '第 ' + issue.row + ' 行：' : '') + (issue.message || '术语存在关系冲突');
         }).join('\n');
     }
     function confirmGlossaryWarnings(data) {
         var text = glossaryIssueMessage(data);
-        return data && data.requires_confirmation && window.confirm(text + '\n\nȷ�Ϻ�������棿');
+        return data && data.requires_confirmation && window.confirm(text + '\n\n确认后继续保存？');
     }
     function setGlossaryMeta(category, scope, note) {
         category = CAT_LABELS[category] ? category : 'manual';
@@ -509,14 +509,14 @@ jQuery(function ($) {
             note: $('#lisun-glossary-note').val().trim()
         };
     }
-    // ���仯ʱ��Χ���䵽���Ĭ��ֵ���û���������ֶ����ǵ�����Χ��
+    // 类别变化时范围回落到类别默认值，用户可在其后手动覆盖单条范围。
     $('#lisun-glossary-category').on('change', function () {
         $('#lisun-glossary-scope').val(($(this).val() === 'erp') ? 'global' : 'article');
     });
     function latestApplyHtml(latest, termId) {
-        if (!latest) return '<span style="color:#999;">δӦ��</span>';
-        var labels = {queued:'�Ŷ���', processing:'������', done:'�����', finished_with_errors:'����ʧ��', failed:'ʧ��', stale:'������Ӧ��'};
-        var status = labels[latest.status] || latest.status || '��';
+        if (!latest) return '<span style="color:#999;">未应用</span>';
+        var labels = {queued:'排队中', processing:'处理中', done:'已完成', finished_with_errors:'部分失败', failed:'失败', stale:'待重新应用'};
+        var status = labels[latest.status] || latest.status || '—';
         var count = parseInt(latest.total_jobs, 10) || 0;
         var activeCount = null;
         // The server has already merged all batches and undo markers. Prefer
@@ -527,7 +527,7 @@ jQuery(function ($) {
             activeCount = parseInt(latest.current_applied_count, 10) || 0;
             count = activeCount;
             if (activeCount === 0 && (latest.status === 'done' || latest.status === 'finished_with_errors')) {
-                status = '������Ӧ��';
+                status = '待重新应用';
             }
         }
         if (latest.details_json) {
@@ -544,20 +544,20 @@ jQuery(function ($) {
         if (activeCount !== null) {
             count = activeCount;
             if (activeCount === 0 && (latest.status === 'done' || latest.status === 'finished_with_errors')) {
-                status = '������Ӧ��';
+                status = '待重新应用';
             }
         }
         return '<div class="lisun-recent-apply-summary"><span class="lisun-recent-apply-time">' + escHtml(latest.created_at || '') + '</span></div>' +
-            '<div class="lisun-recent-apply-status">' + escHtml(status) + ' �� ' + count + ' ƪ</div>' +
-            '<button type="button" class="lisun-recent-apply-toggle" data-term-id="' + escAttr(termId || '') + '">չ��?</button>';
+            '<div class="lisun-recent-apply-status">' + escHtml(status) + ' · ' + count + ' 篇</div>' +
+            '<button type="button" class="lisun-recent-apply-toggle" data-term-id="' + escAttr(termId || '') + '">展开⌄</button>';
     }
     function recentApplyDetailRow(termId) {
         return '<tr class="lisun-recent-apply-detail" data-term-id="' + escAttr(termId || '') + '" style="display:none;">' +
             '<td colspan="7"><div class="lisun-recent-apply-box"></div></td></tr>';
     }
     function recentApplyHistoryHtml(history) {
-        if (!history || !history.length) return '<div class="lisun-recent-apply-empty">����Ӧ�ü�¼</div>';
-        // �ϲ��������Σ��� post_id ȥ�أ���������һ�εļ�¼��������״̬����
+        if (!history || !history.length) return '<div class="lisun-recent-apply-empty">暂无应用记录</div>';
+        // 合并所有批次，按 post_id 去重，保留最新一次的记录（含撤销状态）。
         var byPost = {};
         var unitsByPost = {};
         $.each(history, function (_, batch) {
@@ -571,46 +571,46 @@ jQuery(function ($) {
                 if (!pid || pid === '0') return;
                 app._batch_id = batch.batch_id;
                 app._batch_time = batch.created_at || '';
-                // ����������θ��£�history �Ѱ�ʱ�䵹�������ȵ��������µģ������ǣ���
+                // 后遍历的批次更新（history 已按时间倒序，所以先到的是最新的，不覆盖）。
                 if (!byPost[pid]) byPost[pid] = app;
             });
         });
         var displayItems = Object.values(byPost);
-        var labels = {queued:'�Ŷ���', processing:'������', done:'�����', finished_with_errors:'����ʧ��', failed:'ʧ��'};
+        var labels = {queued:'排队中', processing:'处理中', done:'已完成', finished_with_errors:'部分失败', failed:'失败'};
         var latest = history[0] || {};
         var activeDisplayItems = $.grep(displayItems, function (application) {
             return !application.undone;
         });
-        var html = '<div class="lisun-recent-apply-heading">�ۼ�Ӧ�� �� ' + escHtml(latest.created_at || '') + ' �� �� ' +
-            activeDisplayItems.length + ' ƪ���µ�ǰ��Ӧ��</div>';
+        var html = '<div class="lisun-recent-apply-heading">累计应用 · ' + escHtml(latest.created_at || '') + ' · 共 ' +
+            activeDisplayItems.length + ' 篇文章当前已应用</div>';
         $.each(displayItems, function (_, application) {
             var localOnly = application.local_only || (application.status === 'done' && application.pushed === false);
             var warningOnly = !localOnly && (application.warning_only || application.term_count_warning || (application.post_apply_audit && (application.post_apply_audit.term_count_warning || parseInt(application.post_apply_audit.visible_missing_count || 0, 10) > 0)));
-            var status = application.undone ? '�ѳ���' : (localOnly ? 'ʧ�ܣ������Ѹ��£�Զ�̴����ƣ�' : (labels[application.status] || application.status || '��'));
-            if (warningOnly && status === '�����') status += '���о��棩';
+            var status = application.undone ? '已撤销' : (localOnly ? '失败（本地已更新，远程待重推）' : (labels[application.status] || application.status || '—'));
+            if (warningOnly && status === '已完成') status += '（有警告）';
             var failed = localOnly || (!warningOnly && (application.status === 'failed' || application.status === 'finished_with_errors'));
             var units = unitsByPost[String(application.post_id)] || application.candidate_units || application.translated_units || application.updated || application.occurrences || 0;
             var audit = application.audit || {};
             var appliedCount = parseInt(audit.hit_count || 0, 10) || 0;
-            var countLabel = !failed && appliedCount ? appliedCount + ' ��' : units + ' �����뵥Ԫ';
+            var countLabel = !failed && appliedCount ? appliedCount + ' 处' : units + ' 个翻译单元';
             var contexts = application.contexts || [];
             var contextHtml = contexts.length ? $.map(contexts, function (hit) {
                 return '<div class="lisun-recent-hit-context"><div class="lisun-recent-hit-path">' +
-                    escHtml((hit.unit_type || 'text') + ' �� ' + (hit.source_path || '')) + '</div><div class="lisun-recent-hit-text">' +
+                    escHtml((hit.unit_type || 'text') + ' · ' + (hit.source_path || '')) + '</div><div class="lisun-recent-hit-text">' +
                     escContextText(hit.context || '') + '</div></div>';
-            }).join('') : '<div class="lisun-recent-apply-empty">���޿�չʾ������������</div>';
+            }).join('') : '<div class="lisun-recent-apply-empty">暂无可展示的命中上下文</div>';
             html += '<div class="lisun-recent-apply-record"><div class="lisun-recent-apply-item">' +
                 '<span class="lisun-recent-apply-item-id">#' + escHtml(application.post_id || '') + '</span>' +
                 '<span class="lisun-recent-apply-item-title">' + escHtml(application.title || '') + '</span>' +
                 '<span class="lisun-recent-apply-item-units">' + escHtml(countLabel) + '</span>' +
                 '<span class="lisun-recent-apply-item-state' + (failed ? ' is-failed' : '') + '">' + escHtml(status) + '</span>' +
-                '<button type="button" class="lisun-recent-hit-toggle">����չ��?</button>' +
+                '<button type="button" class="lisun-recent-hit-toggle">命中展开⌄</button>' +
                 '</div><div class="lisun-recent-hit-box" style="display:none;">' + contextHtml + '</div></div>';
         });
         return html;
     }
 
-    // ========== ���ط�ҳ���� ==========
+    // ========== 加载分页数据 ==========
     function loadPage(page, keyword) {
         if (typeof keyword === 'undefined') keyword = currentKw;
         $.post(ajaxurl, {
@@ -620,7 +620,7 @@ jQuery(function ($) {
             keyword: keyword,
             _nonce: nonce
         }, function (res) {
-            if (!res.success) { alert('����ʧ��'); return; }
+            if (!res.success) { alert('加载失败'); return; }
             var data       = res.data;
             var items      = data.items;
             totalPages     = data.total_pages;
@@ -631,7 +631,7 @@ jQuery(function ($) {
             tbody.empty();
 
             if (items.length === 0) {
-                tbody.append('<tr><td colspan="7" style="text-align:center;color:#999;"><?php echo esc_js(__('��ƥ����', 'lisun-manual')); ?></td></tr>');
+                tbody.append('<tr><td colspan="7" style="text-align:center;color:#999;"><?php echo esc_js(__('无匹配结果', 'lisun-manual')); ?></td></tr>');
             }
 
             var offset = (currentPage - 1) * PER_PAGE;
@@ -642,25 +642,25 @@ jQuery(function ($) {
                 var note = item.note || '';
                 var catLabel  = CAT_LABELS[item.category] || item.category || '';
                 var scopeLabel = SCOPE_LABELS[item.scope] || item.scope || '';
-                var noteExtra = note ? '��' + escHtml(note) + '��' : '';
+                var noteExtra = note ? '（' + escHtml(note) + '）' : '';
                 var importDate = item.import_date || (new Date().getFullYear() + '/09/21');
                 tbody.append(
                     '<tr class="lisun-glossary-term-row zebra-' + (i % 2 === 0 ? 'odd' : 'even') + '" data-index="' + rowIndex + '" data-term-id="' + escAttr(item.term_id || '') + '" data-zh="' + escAttr(zh) + '" data-en="' + escAttr(en) + '" data-note="' + escAttr(note) + '" data-category="' + escAttr(item.category || '') + '" data-scope="' + escAttr(item.scope || '') + '" data-import-date="' + escAttr(importDate) + '">' +
                     '<td class="lisun-row-num">' + (rowIndex + 1) + '</td>' +
                     '<td class="lisun-cell-zh">' + escHtml(zh) + '</td>' +
                     '<td class="lisun-cell-en">' + escHtml(en) + '</td>' +
-                    '<td class="lisun-cell-category">' + escHtml(catLabel) + ' �� ' + escHtml(scopeLabel) + noteExtra + '</td>' +
+                    '<td class="lisun-cell-category">' + escHtml(catLabel) + ' · ' + escHtml(scopeLabel) + noteExtra + '</td>' +
                     '<td class="lisun-cell-import-date">' + escHtml(importDate) + '</td>' +
                     '<td class="lisun-cell-apply-status" style="font-size:12px;">' + latestApplyHtml(item.latest_apply, item.term_id || '') + '</td>' +
                     '<td class="lisun-row-actions">' +
                     '<span class="lisun-view-btns">' +
-                    '<button class="button button-small lisun-edit-glossary"><?php echo esc_js(__('�༭', 'lisun-manual')); ?></button> ' +
-                    '<button class="button button-small lisun-glossary-impact">�鿴Ӱ��</button> ' +
-                    '<button class="button button-small lisun-delete-glossary" style="color:#d63638;"><?php echo esc_js(__('ɾ��', 'lisun-manual')); ?></button>' +
+                    '<button class="button button-small lisun-edit-glossary"><?php echo esc_js(__('编辑', 'lisun-manual')); ?></button> ' +
+                    '<button class="button button-small lisun-glossary-impact">查看影响</button> ' +
+                    '<button class="button button-small lisun-delete-glossary" style="color:#d63638;"><?php echo esc_js(__('删除', 'lisun-manual')); ?></button>' +
                     '</span>' +
                     '<span class="lisun-edit-btns" style="display:none;">' +
-                    '<button class="button button-small button-primary lisun-save-glossary"><?php echo esc_js(__('����', 'lisun-manual')); ?></button> ' +
-                    '<button class="button button-small lisun-cancel-edit"><?php echo esc_js(__('ȡ��', 'lisun-manual')); ?></button>' +
+                    '<button class="button button-small button-primary lisun-save-glossary"><?php echo esc_js(__('保存', 'lisun-manual')); ?></button> ' +
+                    '<button class="button button-small lisun-cancel-edit"><?php echo esc_js(__('取消', 'lisun-manual')); ?></button>' +
                     '</span>' +
                     '</td>' +
                     '</tr>' +
@@ -674,50 +674,50 @@ jQuery(function ($) {
         });
     }
 
-    // ========== ����վ ==========
+    // ========== 回收站 ==========
     function loadGlossaryTrash() {
         var $tbody = $('#lisun-glossary-trash-tbody');
-        $tbody.html('<tr><td colspan="6" style="text-align:center;color:#999;">���ڼ��ء�</td></tr>');
+        $tbody.html('<tr><td colspan="6" style="text-align:center;color:#999;">正在加载…</td></tr>');
         $.post(ajaxurl, {action:'lisun_get_glossary_trash', _nonce:nonce}, function (res) {
-            if (!res.success) { $tbody.html('<tr><td colspan="6" style="text-align:center;color:#d63638;">����վ����ʧ��</td></tr>'); return; }
+            if (!res.success) { $tbody.html('<tr><td colspan="6" style="text-align:center;color:#d63638;">回收站加载失败</td></tr>'); return; }
             var items = res.data.items || [];
-            $('#lisun-open-glossary-trash').text('����վ' + (items.length ? ' (' + items.length + ')' : ''));
-            if (!items.length) { $tbody.html('<tr><td colspan="6" style="text-align:center;color:#999;">����վΪ��</td></tr>'); return; }
+            $('#lisun-open-glossary-trash').text('回收站' + (items.length ? ' (' + items.length + ')' : ''));
+            if (!items.length) { $tbody.html('<tr><td colspan="6" style="text-align:center;color:#999;">回收站为空</td></tr>'); return; }
             var html = '';
             $.each(items, function (_, item) {
                 html += '<tr data-term-id="' + escAttr(item.term_id || '') + '">' +
                     '<td>' + escHtml(item.zh || '') + '</td><td>' + escHtml(item.en || '') + '</td>' +
-                    '<td>' + escHtml((CAT_LABELS[item.category] || item.category || '') + ' �� ' + (SCOPE_LABELS[item.scope] || item.scope || '')) + '</td>' +
+                    '<td>' + escHtml((CAT_LABELS[item.category] || item.category || '') + ' · ' + (SCOPE_LABELS[item.scope] || item.scope || '')) + '</td>' +
                     '<td>' + escHtml(item.deleted_at_text || '') + '</td><td>' + escHtml(item.expires_at_text || '') + '</td>' +
-                    '<td><button type="button" class="button button-small lisun-restore-glossary">�ָ�</button> ' +
-                    '<button type="button" class="button button-small lisun-permanently-delete-glossary" style="color:#d63638;">����ɾ��</button></td></tr>';
+                    '<td><button type="button" class="button button-small lisun-restore-glossary">恢复</button> ' +
+                    '<button type="button" class="button button-small lisun-permanently-delete-glossary" style="color:#d63638;">彻底删除</button></td></tr>';
             });
             $tbody.html(html);
-        }).fail(function () { $tbody.html('<tr><td colspan="6" style="text-align:center;color:#d63638;">����վ����ʧ��</td></tr>'); });
+        }).fail(function () { $tbody.html('<tr><td colspan="6" style="text-align:center;color:#d63638;">回收站请求失败</td></tr>'); });
     }
 
     $('#lisun-open-glossary-trash').on('click', function () { $('#lisun-glossary-trash-panel').slideDown(120); loadGlossaryTrash(); });
     $('#lisun-close-glossary-trash').on('click', function () { $('#lisun-glossary-trash-panel').slideUp(120); });
     $('#lisun-glossary-trash-tbody').on('click', '.lisun-restore-glossary', function () {
         var $btn = $(this), termId = String($btn.closest('tr').data('term-id') || '');
-        if (!termId || !confirm('ȷ�ϻָ������')) return;
+        if (!termId || !confirm('确认恢复该术语？')) return;
         $btn.prop('disabled', true);
         $.post(ajaxurl, {action:'lisun_restore_glossary', term_id:termId, _nonce:nonce}, function (res) {
             if (res.success) { loadGlossaryTrash(); loadPage(currentPage); }
-            else { alert((res.data && res.data.message) || '�ָ�ʧ��'); $btn.prop('disabled', false); }
-        }).fail(function () { alert('�ָ�����ʧ��'); $btn.prop('disabled', false); });
+            else { alert((res.data && res.data.message) || '恢复失败'); $btn.prop('disabled', false); }
+        }).fail(function () { alert('恢复请求失败'); $btn.prop('disabled', false); });
     });
     $('#lisun-glossary-trash-tbody').on('click', '.lisun-permanently-delete-glossary', function () {
         var $btn = $(this), termId = String($btn.closest('tr').data('term-id') || '');
-        if (!termId || !confirm('����ɾ�����޷��ָ���ȷ�ϼ�����')) return;
+        if (!termId || !confirm('彻底删除后无法恢复，确认继续？')) return;
         $btn.prop('disabled', true);
         $.post(ajaxurl, {action:'lisun_permanently_delete_glossary', term_id:termId, _nonce:nonce}, function (res) {
             if (res.success) loadGlossaryTrash();
-            else { alert((res.data && res.data.message) || '����ɾ��ʧ��'); $btn.prop('disabled', false); }
-        }).fail(function () { alert('����ɾ������ʧ��'); $btn.prop('disabled', false); });
+            else { alert((res.data && res.data.message) || '彻底删除失败'); $btn.prop('disabled', false); }
+        }).fail(function () { alert('彻底删除请求失败'); $btn.prop('disabled', false); });
     });
 
-    // ���Ӧ�ã�Ĭ������չ��ʱ��ȡ����һ��������ϸ
+    // 最近应用：默认收起，展开时读取最新一批文章明细
     $('#lisun-glossary-tbody').on('click', '.lisun-recent-apply-toggle', function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -729,14 +729,14 @@ jQuery(function ($) {
         }
         if ($detail.is(':visible')) {
             $detail.hide();
-            $btn.text('չ��?');
+            $btn.text('展开⌄');
             return;
         }
         $detail.show();
-        $btn.text('����?');
+        $btn.text('收起⌃');
         var $box = $detail.find('.lisun-recent-apply-box');
         if ($box.data('loaded')) return;
-        $box.html('<div class="lisun-recent-apply-empty">���ڶ�ȡ����Ӧ����ϸ��</div>');
+        $box.html('<div class="lisun-recent-apply-empty">正在读取本次应用明细…</div>');
         $.post(ajaxurl, {
             action: 'lisun_glossary_apply_history',
             term_id: String($btn.data('term-id') || ''),
@@ -745,10 +745,10 @@ jQuery(function ($) {
             if (res.success) {
                 $box.html(recentApplyHistoryHtml(res.data.history || [])).data('loaded', true);
             } else {
-                $box.html('<div class="lisun-recent-apply-empty">��ȡӦ�ü�¼ʧ��</div>');
+                $box.html('<div class="lisun-recent-apply-empty">读取应用记录失败</div>');
             }
         }).fail(function () {
-            $box.html('<div class="lisun-recent-apply-empty">��ȡӦ�ü�¼����ʧ��</div>');
+            $box.html('<div class="lisun-recent-apply-empty">读取应用记录请求失败</div>');
         });
     });
 
@@ -759,24 +759,24 @@ jQuery(function ($) {
         var $box = $btn.closest('.lisun-recent-apply-record').find('.lisun-recent-hit-box');
         if ($box.is(':visible')) {
             $box.hide();
-            $btn.text('����չ��?');
+            $btn.text('命中展开⌄');
         } else {
             $box.show();
-            $btn.text('��������?');
+            $btn.text('命中收起⌃');
         }
     });
 
-    // ========== ҳ����Ϣ���� ==========
+    // ========== 页面信息文字 ==========
     function updatePageInfo() {
         if (totalPages <= 1) {
             $('#lisun-page-info').text('');
         } else {
-            $('#lisun-page-info').text('<?php echo esc_js(__('��', 'lisun-manual')); ?> ' + currentPage + ' / ' + totalPages + ' <?php echo esc_js(__('ҳ', 'lisun-manual')); ?>');
+            $('#lisun-page-info').text('<?php echo esc_js(__('第', 'lisun-manual')); ?> ' + currentPage + ' / ' + totalPages + ' <?php echo esc_js(__('页', 'lisun-manual')); ?>');
         }
     }
     updatePageInfo();
 
-    // ========== ��Ⱦҳ�밴ť ==========
+    // ========== 渲染页码按钮 ==========
     function renderPageButtons() {
         var $container = $('#lisun-pagination-pages');
         if (totalPages <= 1) {
@@ -785,7 +785,7 @@ jQuery(function ($) {
         }
 
         var html = '';
-        // ��ҳ & ��һҳ
+        // 首页 & 上一页
         html += '<button type="button" class="button button-small lisun-page-btn" data-page="1"' + (currentPage <= 1 ? ' disabled' : '') + '>&laquo;</button>';
         html += '<button type="button" class="button button-small lisun-page-btn" data-page="' + Math.max(1, currentPage - 1) + '"' + (currentPage <= 1 ? ' disabled' : '') + '>&lsaquo;</button>';
 
@@ -804,14 +804,14 @@ jQuery(function ($) {
             }
         }
 
-        // ��һҳ & ĩҳ
+        // 下一页 & 末页
         html += '<button type="button" class="button button-small lisun-page-btn" data-page="' + Math.min(totalPages, currentPage + 1) + '"' + (currentPage >= totalPages ? ' disabled' : '') + '>&rsaquo;</button>';
         html += '<button type="button" class="button button-small lisun-page-btn" data-page="' + totalPages + '"' + (currentPage >= totalPages ? ' disabled' : '') + '>&raquo;</button>';
 
         $container.html(html);
     }
 
-    // ========== ҳ�����¼���ί�У� ==========
+    // ========== 页码点击事件（委托） ==========
     $('#lisun-pagination-pages').on('click', '.lisun-page-btn, .lisun-page-num', function () {
         var $btn = $(this);
         if ($btn.prop('disabled')) return;
@@ -821,14 +821,14 @@ jQuery(function ($) {
         }
     });
 
-    // ========== ���ӱ��� ==========
+    // ========== 添加表单 ==========
     $('#lisun-add-glossary-btn').on('click', function () {
         $('#lisun-glossary-index').val('-1');
         $('#lisun-glossary-term-id').val('');
         $('#lisun-glossary-zh').val('');
         $('#lisun-glossary-en').val('');
         setGlossaryMeta('manual', 'article', '');
-        $('#lisun-form-title').text('<?php echo esc_js(__('��������', 'lisun-manual')); ?>');
+        $('#lisun-form-title').text('<?php echo esc_js(__('添加术语', 'lisun-manual')); ?>');
         $('#lisun-glossary-form').slideDown();
     });
 
@@ -836,7 +836,7 @@ jQuery(function ($) {
         $('#lisun-glossary-form').slideUp();
     });
 
-    // ����������/�༭����
+    // 保存新术语/编辑术语
     $('#lisun-save-glossary-btn').on('click', function () {
         var zh = $('#lisun-glossary-zh').val().trim();
         var en = $('#lisun-glossary-en').val().trim();
@@ -844,7 +844,7 @@ jQuery(function ($) {
         var index = parseInt($('#lisun-glossary-index').val(), 10);
         var termId = String($('#lisun-glossary-term-id').val() || '');
 
-        if (!zh || !en) { alert('<?php echo esc_js(__('��Ӣ�����ﲻ��Ϊ��', 'lisun-manual')); ?>'); return; }
+        if (!zh || !en) { alert('<?php echo esc_js(__('中英文术语不能为空', 'lisun-manual')); ?>'); return; }
 
         var action = (termId !== '' || index >= 0) ? 'lisun_save_glossary' : 'lisun_add_glossary';
         var payload = {action: action, zh: zh, en: en, note: meta.note, category: meta.category, scope: meta.scope, _nonce: nonce};
@@ -862,16 +862,16 @@ jQuery(function ($) {
                     location.reload();
                 } else if (res.data && res.data.requires_confirmation) {
                     if (confirmGlossaryWarnings(res.data)) submit(true);
-                    // �û����ȡ�������ֱ������ݣ������棬Ҳ���ٵ��ڶ������ڡ�
+                    // 用户点击取消：保持表单内容，不保存，也不再弹第二个窗口。
                 } else {
-                    alert(glossaryIssueMessage(res.data) || '<?php echo esc_js(__('����ʧ��', 'lisun-manual')); ?>');
+                    alert(glossaryIssueMessage(res.data) || '<?php echo esc_js(__('保存失败', 'lisun-manual')); ?>');
                 }
             });
         }
         submit(false);
     });
 
-    // CSV ���룺��һ��ֻ�������͹�ϵ��飬ȷ�Ϻ�������ύ�����������д�롣
+    // CSV 导入：第一次只做解析和关系检查，确认后才真正提交，避免半批量写入。
     $('#lisun-glossary-csv-input').on('change', function () {
         var file = this.files && this.files[0];
         if (!file) return;
@@ -889,22 +889,22 @@ jQuery(function ($) {
                 contentType: false,
                 success: function (res) {
                     if (res.success) {
-                        alert('�ѵ��� ' + (res.data.imported || 0) + ' �����');
+                        alert('已导入 ' + (res.data.imported || 0) + ' 条术语。');
                         location.reload();
                     } else if (res.data && res.data.requires_confirmation) {
                         if (confirmGlossaryWarnings(res.data)) submit(true);
-                        // �û����ȡ���������룬���ٵ��ڶ������ڡ�
+                        // 用户点击取消：不导入，不再弹第二个窗口。
                     } else {
-                        alert(glossaryIssueMessage(res.data) || 'CSV ����ʧ�ܣ�δ�����κ����');
+                        alert(glossaryIssueMessage(res.data) || 'CSV 导入失败，未保存任何术语。');
                     }
                 },
-                error: function () { alert('CSV ��������ʧ�ܣ�δ�����κ����'); }
+                error: function () { alert('CSV 导入请求失败，未保存任何术语。'); }
             });
         }
         submit(false);
     });
 
-    // ========== ���� ==========
+    // ========== 搜索 ==========
     function doSearch() {
         var kw = $('#lisun-glossary-search').val().trim();
         if (kw) {
@@ -926,15 +926,15 @@ jQuery(function ($) {
         loadPage(1, '');
     });
 
-    // ========== ���� ==========
+    // ========== 导出 ==========
     $('#lisun-export-glossary').on('click', function () {
         window.location.href = ajaxurl + '?action=lisun_export_glossary&_nonce=' + nonce;
     });
 
-    // ========== �༭ / ɾ����ί���¼���stopPropagation ��ֹ�ⲿ JS ��ͻ�� ==========
+    // ========== 编辑 / 删除（委托事件，stopPropagation 防止外部 JS 冲突） ==========
     $('#lisun-glossary-tbody')
 
-    // �༭ �� �򿪶�������
+    // 编辑 — 打开顶部表单
     .on('click', '.lisun-edit-glossary', function (e) {
         e.stopPropagation();
         var $tr   = $(this).closest('tr');
@@ -944,17 +944,17 @@ jQuery(function ($) {
         $('#lisun-glossary-zh').val($tr.data('zh'));
         $('#lisun-glossary-en').val($tr.data('en'));
         setGlossaryMeta($tr.data('category'), $tr.data('scope'), $tr.data('note'));
-        $('#lisun-form-title').text('<?php echo esc_js(__('�༭����', 'lisun-manual')); ?>');
+        $('#lisun-form-title').text('<?php echo esc_js(__('编辑术语', 'lisun-manual')); ?>');
         $('#lisun-glossary-form').slideDown();
     })
 
-    // ɾ�� �� ��ҳ��֪��reload ��ǰҳ
+    // 删除 — 分页感知，reload 当前页
     .on('click', '.lisun-delete-glossary', function (e) {
         e.stopPropagation();
-        if (!confirm('ȷ�Ͻ��������������վ��\n\n����ᱣ�� 30 �죬�ڼ���Իָ���')) return;
+        if (!confirm('确认将该术语移入回收站？\n\n术语会保留 30 天，期间可以恢复。')) return;
         var $tr = $(this).closest('tr');
         var termId = String($tr.data('term-id') || '');
-        if (!termId) { alert('����ȱ��Ψһ��ʶ���޷���ȫɾ������ˢ��ҳ������ԡ�'); return; }
+        if (!termId) { alert('术语缺少唯一标识，无法安全删除，请刷新页面后重试。'); return; }
         $.post(ajaxurl, {
             action: 'lisun_delete_glossary',
             term_id: termId,
@@ -964,12 +964,12 @@ jQuery(function ($) {
                 loadGlossaryTrash();
                 loadPage(currentPage);
             } else {
-                alert(res.data.message || '<?php echo esc_js(__('ɾ��ʧ��', 'lisun-manual')); ?>');
+                alert(res.data.message || '<?php echo esc_js(__('删除失败', 'lisun-manual')); ?>');
             }
         });
     });
 
-    // ========== �������ģ��鿴Ӱ�� �� ȷ�Ϻ��̨����Ӧ�� ==========
+    // ========== 术语中心：查看影响 → 确认后后台批量应用 ==========
     var activeImpact = null;
     var activeBatchId = '';
     var batchTimer = null;
@@ -977,8 +977,8 @@ jQuery(function ($) {
     var activeStaleJobIds = [];
     var activeApplyButton = null;
     var impactModalLocked = false;
-    // �û���Ӱ���б��ﹴѡ������ ID��map: postId -> true����
-    // ��ѡ��ײ���ťֻ�����Щ���£�����ѡ����ȫ��Ӧ����Ϊ��
+    // 用户在影响列表里勾选的文章 ID（map: postId -> true）。
+    // 勾选后底部按钮只入队这些文章；不勾选保持全局应用行为。
     var selectedPostIds = {};
     var currentPendingCount = 0;
     var currentAppStateStatus = '';
@@ -995,29 +995,29 @@ jQuery(function ($) {
     }
 
     function escList(items, key) {
-        if (!items || !items.length) return '<li class="lisun-impact-empty">��</li>';
+        if (!items || !items.length) return '<li class="lisun-impact-empty">无</li>';
         return $.map(items.slice(0, 30), function (item) {
-            var sourceChanged = item.reason === '����Դ���ѱ仯���������·���';
-            var retryable = sourceChanged || /�����·���|������|�޷���λ��Ӧ���뵥Ԫ|û���ȶ�����ê��/.test(item.reason || '');
+            var sourceChanged = item.reason === '中文源文已变化，需先重新翻译';
+            var retryable = sourceChanged || /需重新翻译|需重译|无法定位对应翻译单元|没有稳定术语锚点/.test(item.reason || '');
             return '<li><span class="lisun-impact-skipped-text">#' + escHtml(item.post_id) + ' ' + escHtml(item.title || '') +
-                (item.reason ? ' �� <span style="color:#996800;">' + escHtml(item.reason) + '</span>' : '') +
-                (item.units ? '��' + item.units + ' ����Ԫ��' : '') +
-                (item.occurrences ? '��' + item.occurrences + ' ����' : '') +
+                (item.reason ? ' — <span style="color:#996800;">' + escHtml(item.reason) + '</span>' : '') +
+                (item.units ? '（' + item.units + ' 个单元）' : '') +
+                (item.occurrences ? '（' + item.occurrences + ' 处）' : '') +
                 '</span>' +
-                (retryable ? '<button type="button" class="button button-small lisun-retranslate-stale-single" data-post-id="' + escAttr(item.post_id) + '">' + (sourceChanged ? '��������' : '���·���') + '</button>' : '') +
+                (retryable ? '<button type="button" class="button button-small lisun-retranslate-stale-single" data-post-id="' + escAttr(item.post_id) + '">' + (sourceChanged ? '增量翻译' : '重新翻译') + '</button>' : '') +
                 '</li>';
-        }).join('') + (items.length > 30 ? '<li>������ ' + (items.length - 30) + ' ƪδչ��</li>' : '');
+        }).join('') + (items.length > 30 ? '<li>…其余 ' + (items.length - 30) + ' 篇未展开</li>' : '');
     }
 
     function sourceChangedSkipped(items) {
         return $.grep(items || [], function (item) {
-            return item.reason === '����Դ���ѱ仯���������·���' || /�����·���|������|�޷���λ��Ӧ���뵥Ԫ|û���ȶ�����ê��/.test(item.reason || '');
+            return item.reason === '中文源文已变化，需先重新翻译' || /需重新翻译|需重译|无法定位对应翻译单元|没有稳定术语锚点/.test(item.reason || '');
         });
     }
 
     function escContextText(text) {
         var safe = escHtml(text || '');
-        return safe.replace(/��([^����]+)��/g, '<mark>��$1��</mark>');
+        return safe.replace(/【([^【】]+)】/g, '<mark>【$1】</mark>');
     }
 
     function escComparisonText(text) {
@@ -1028,38 +1028,38 @@ jQuery(function ($) {
         if (!hit || (!hit.source_text && !hit.english_text && !hit.remote_edit_url)) return '';
         var html = '<div class="lisun-impact-comparison">';
         if (hit.source_text) {
-            html += '<div class="lisun-impact-comparison-block"><span class="lisun-impact-comparison-label">����ԭ��</span>' +
+            html += '<div class="lisun-impact-comparison-block"><span class="lisun-impact-comparison-label">中文原文</span>' +
                 '<div class="lisun-impact-comparison-text">' + escComparisonText(hit.source_text) + '</div></div>';
         }
         if (hit.english_text) {
-            html += '<div class="lisun-impact-comparison-block"><span class="lisun-impact-comparison-label">��ǰӢ������</span>' +
+            html += '<div class="lisun-impact-comparison-block"><span class="lisun-impact-comparison-label">当前英文译文</span>' +
                 '<div class="lisun-impact-comparison-text">' + escComparisonText(hit.english_text) + '</div></div>';
         } else {
-            html += '<div class="lisun-impact-comparison-block"><span class="lisun-impact-comparison-label">��ǰӢ������</span>' +
-                '<div class="lisun-impact-comparison-text">��ʱ�޷���ȡ�ö�Ӣ��</div></div>';
+            html += '<div class="lisun-impact-comparison-block"><span class="lisun-impact-comparison-label">当前英文译文</span>' +
+                '<div class="lisun-impact-comparison-text">暂时无法读取该段英文</div></div>';
         }
         if (hit.target_term) {
-            html += '<div class="lisun-impact-comparison-block"><span class="lisun-impact-comparison-label">Ŀ������</span>' +
+            html += '<div class="lisun-impact-comparison-block"><span class="lisun-impact-comparison-label">目标术语</span>' +
                 '<div class="lisun-impact-comparison-text">' + escHtml(hit.target_term) +
-                '��Ӣ�Ķ����г��� ' + escHtml(hit.actual_count || 0) + '/' + escHtml(hit.expected_count || 0) + ' �Σ�</div></div>';
+                '（英文段落中出现 ' + escHtml(hit.actual_count || 0) + '/' + escHtml(hit.expected_count || 0) + ' 次）</div></div>';
         }
         if (hit.remote_edit_url) {
-            html += '<a class="lisun-impact-comparison-link" href="' + escAttr(hit.remote_edit_url) + '" target="_blank" rel="noopener">��Զ��Ӣ�����º�̨</a>';
+            html += '<a class="lisun-impact-comparison-link" href="' + escAttr(hit.remote_edit_url) + '" target="_blank" rel="noopener">打开远程英文文章后台</a>';
         }
         return html + '</div>';
     }
 
     function escContexts(item) {
         var contexts = item.contexts || [];
-        if (!contexts.length) return '<div class="lisun-impact-empty">���޿�չʾ������������</div>';
+        if (!contexts.length) return '<div class="lisun-impact-empty">暂无可展示的命中上下文</div>';
         var html = '<div class="lisun-impact-panel lisun-impact-context-panel">';
         $.each(contexts.slice(0, 100), function (_, hit) {
             html += '<div class="lisun-impact-context">' +
-                '<div class="lisun-impact-context-path">' + escHtml((hit.unit_type || 'text') + ' �� ' + (hit.source_path || '')) + '</div>' +
+                '<div class="lisun-impact-context-path">' + escHtml((hit.unit_type || 'text') + ' · ' + (hit.source_path || '')) + '</div>' +
                 '<div class="lisun-impact-context-text">' + escContextText(hit.context || '') + '</div>' +
                 '</div>';
         });
-        if (contexts.length > 100) html += '<div class="lisun-impact-empty">���� ' + (contexts.length - 100) + ' ��δչ��</div>';
+        if (contexts.length > 100) html += '<div class="lisun-impact-empty">其余 ' + (contexts.length - 100) + ' 处未展开</div>';
         return html + '</div>';
     }
 
@@ -1082,27 +1082,27 @@ jQuery(function ($) {
         if (!rows.length && !unanchored.length) return '';
         var title = rows.length
             ? (hardVisibleFailure
-                ? '����Ӧ��δ��ɣ���ӦӢ�Ķ���δʹ��Ŀ���뷨�������´���'
+                ? '术语应用未完成：对应英文段落未使用目标译法，需重新处理'
                 : (termCountWarning
-                ? '����������ʾ��' + rows.length + ' �����˹��˶�'
-                : (item.status === 'incomplete' ? 'Ӣ��������ȱ ' : (audit.resolved ? '��ͨ���������� ' : '������ ')) + rows.length + ' ��'))
-            : 'Ӣ���������ĵ��� ' + unanchored.length + ' ��δ�����ȶ�ê��';
-        var html = '<details class="lisun-impact-unapplied"' + (hardVisibleFailure || termCountWarning ? ' open' : '') + '><summary>' + title + '���鿴ԭ��</summary>';
+                ? '术语数量提示：' + rows.length + ' 处需人工核对'
+                : (item.status === 'incomplete' ? '英文译文仍缺 ' : (audit.resolved ? '已通过增量处理 ' : '待处理 ')) + rows.length + ' 处'))
+            : '英文已有译文但有 ' + unanchored.length + ' 处未建立稳定锚点';
+        var html = '<details class="lisun-impact-unapplied"' + (hardVisibleFailure || termCountWarning ? ' open' : '') + '><summary>' + title + '（查看原因）</summary>';
         if (rows.length) html += '<ul class="lisun-impact-unapplied-list">';
         $.each(rows.slice(0, 200), function (_, hit) {
             var reason = hardVisibleFailure
-                ? 'Ӧ�ú�Ӣ��������δ����Ŀ�������������������'
-                : (hit.reason || 'Ӣ�ı�����������ִ�����ͬ�����˹��˶�');
-            html += '<li class="lisun-impact-unapplied-item"><strong>' + escHtml(hit.unit_type || 'text') + ' �� ' + escHtml(hit.source_path || hit.unit_key || '') + '</strong>' +
-                '��' + escContextText(hit.context || hit.matched || '') +
-                ' <span class="lisun-impact-unapplied-reason">�� ' + escHtml(reason) + '</span>' +
+                ? '应用后英文译文中未发现目标术语，需重新增量翻译'
+                : (hit.reason || '英文表达与术语出现次数不同，请人工核对');
+            html += '<li class="lisun-impact-unapplied-item"><strong>' + escHtml(hit.unit_type || 'text') + ' · ' + escHtml(hit.source_path || hit.unit_key || '') + '</strong>' +
+                '：' + escContextText(hit.context || hit.matched || '') +
+                ' <span class="lisun-impact-unapplied-reason">— ' + escHtml(reason) + '</span>' +
                 renderTermComparison(hit) + '</li>';
         });
         if (rows.length) {
-            if (rows.length > 200) html += '<li class="lisun-impact-unapplied-item">���� ' + (rows.length - 200) + ' ���ѱ��浽���μ�¼</li>';
+            if (rows.length > 200) html += '<li class="lisun-impact-unapplied-item">其余 ' + (rows.length - 200) + ' 处已保存到批次记录</li>';
             html += '</ul>';
         }
-        if (unanchored.length) html += '<div class="lisun-impact-anchor-note">���� ' + unanchored.length + ' ��Ӣ��Ŀ����Կɼ�����û���ȶ�ê�㣻��Ӱ�챾�οɼ�����ͳ�ƣ������޸������ʱ�����Զ��滻�����˹��˶ԡ�</div>';
+        if (unanchored.length) html += '<div class="lisun-impact-anchor-note">其中 ' + unanchored.length + ' 处英文目标词仍可见，但没有稳定锚点；不影响本次可见译文统计，后续修改术语表时不能自动替换，需人工核对。</div>';
         return html + '</details>';
     }
 
@@ -1120,8 +1120,8 @@ jQuery(function ($) {
     }
 
     function escCandidates(items, history) {
-        if (!items || !items.length) return '<div class="lisun-impact-empty">û����Ҫ���µ�����</div>';
-        var modeLabels = {direct:'ֱ���滻', incremental:'��������', legacy:'�ɰ氲ȫ�滻', local_only:'�����Ѹ��£�Զ�̴�����'};
+        if (!items || !items.length) return '<div class="lisun-impact-empty">没有需要更新的文章</div>';
+        var modeLabels = {direct:'直接替换', incremental:'增量翻译', legacy:'旧版安全替换', local_only:'本地已更新，远程待重推'};
         var latestApplications = latestApplicationsByPost(history);
         return $.map(items, function (item) {
             var applied = item.status === 'applied';
@@ -1168,55 +1168,55 @@ jQuery(function ($) {
             // occurrences affected. For pending incremental work, show the
             // number of translation units that will be sent to DeepL.
             var countText = hasVisibleAudit && (applied || incomplete)
-                ? ('�ɼ����� ' + visibleAppliedCount + '/' + hitCount + ' ��')
+                ? ('可见译文 ' + visibleAppliedCount + '/' + hitCount + ' 处')
                 : mixedApplication
-                ? ('ֱ���滻 ' + directOccurrenceCount + ' �� + �������� ' + incrementalUnitCount + ' ����Ԫ������ ' + incrementalOccurrenceCount + ' ����')
+                ? ('直接替换 ' + directOccurrenceCount + ' 处 + 增量翻译 ' + incrementalUnitCount + ' 个单元（覆盖 ' + incrementalOccurrenceCount + ' 处）')
                 : incomplete && item.attempted_expected_occurrences
-                ? ((item.attempted_applied_occurrences || 0) + '/' + item.attempted_expected_occurrences + ' ��')
+                ? ((item.attempted_applied_occurrences || 0) + '/' + item.attempted_expected_occurrences + ' 处')
                 : applied
                 ? (item.mode === 'incremental' && incrementalUnitCount
-                    ? (incrementalUnitCount + ' ����Ԫ')
-                    : (appliedOccurrenceCount + ' ��'))
+                    ? (incrementalUnitCount + ' 个单元')
+                    : (appliedOccurrenceCount + ' 处'))
                 : (item.mode === 'incremental'
-                    ? ((item.units || 0) + ' �����뵥Ԫ')
-                    : (item.occurrences ? item.occurrences + ' ��' : ((item.units || 0) + ' �����뵥Ԫ')));
+                    ? ((item.units || 0) + ' 个翻译单元')
+                    : (item.occurrences ? item.occurrences + ' 处' : ((item.units || 0) + ' 个翻译单元')));
             var unappliedCount = parseInt(audit.unapplied_count || 0, 10) || 0;
             var resolvedCount = parseInt(audit.resolved_count || 0, 10) || 0;
             var processCount = applied ? resolvedCount : unappliedCount;
-            var processLabel = applied ? '��ͨ���������� ' : (incomplete ? '�����������ȱʧ ' : '���������� ');
+            var processLabel = applied ? '已通过增量处理 ' : (incomplete ? '增量翻译后仍缺失 ' : '待增量处理 ');
             var termAnomalyCount = parseInt(item.term_anomaly_units || 0, 10) || 0;
             var termWarningCount = parseInt(audit.term_count_warning_count || audit.visible_missing_count || 0, 10) || 0;
             var selectable = !applied;
-            var singleButtonText = hardVisibleFailure ? '������������' : '��ƪӦ��';
+            var singleButtonText = hardVisibleFailure ? '重新增量翻译' : '单篇应用';
             var application = latestApplications[String(item.post_id)] || {};
             var undoButton = '';
             if (applied && application.undo_available && application.applied_revision_id) {
-                undoButton = '<button type="button" class="lisun-impact-single lisun-undo-apply" data-post-id="' + escAttr(item.post_id) + '" data-batch-id="' + escAttr(application._batch_id || '') + '" data-revision="' + escAttr(application.applied_revision_id) + '" data-has-newer="' + (application.undo_warning ? '1' : '0') + '" title="' + escAttr(application.undo_warning || '�������ָ���Ӧ��ǰ�汾') + '" style="color:#b32d2e;border-color:#f3b9bb;background:#fff5f5;">������ƪ</button>';
+                undoButton = '<button type="button" class="lisun-impact-single lisun-undo-apply" data-post-id="' + escAttr(item.post_id) + '" data-batch-id="' + escAttr(application._batch_id || '') + '" data-revision="' + escAttr(application.applied_revision_id) + '" data-has-newer="' + (application.undo_warning ? '1' : '0') + '" title="' + escAttr(application.undo_warning || '撤销并恢复到应用前版本') + '" style="color:#b32d2e;border-color:#f3b9bb;background:#fff5f5;">撤销此篇</button>';
             } else if (applied && application.undo_reason) {
                 undoButton = '<span class="lisun-impact-single" style="font-size:11px;color:#888;" title="' + escAttr(application.undo_reason) + '">' + escHtml(application.undo_reason) + '</span>';
             }
             return '<details class="lisun-impact-article' + (selectedPostIds[item.post_id] ? ' is-selected' : '') + '" data-post-id="' + escAttr(item.post_id) + '">' +
                 '<summary>' +
-                    (selectable ? '<input type="checkbox" class="lisun-impact-check" data-post-id="' + escAttr(item.post_id) + '" title="��ѡ�������Ӧ�õ���ƪ" ' + (selectedPostIds[item.post_id] ? 'checked' : '') + '>' : '') +
+                    (selectable ? '<input type="checkbox" class="lisun-impact-check" data-post-id="' + escAttr(item.post_id) + '" title="勾选后可批量应用到这篇" ' + (selectedPostIds[item.post_id] ? 'checked' : '') + '>' : '') +
                     '<span class="lisun-impact-article-title"><strong>#' + escHtml(item.post_id) + '</strong>' + escHtml(item.title || '') + '</span>' +
                     '<span class="lisun-impact-badges">' +
-                        '<span class="lisun-impact-badge' + modeClass + '">' + escHtml(applied ? '��Ӧ��' : (hardVisibleFailure ? '����Ӧ��δ���' : (incomplete ? '��������δ���' : (localOnly ? modeLabels.local_only : (modeLabels[item.mode] || item.mode || ''))))) + ' �� ' + escHtml(countText) + '</span>' +
-                        '<span class="lisun-impact-badge">���� ' + hitCount + ' ��</span>' +
-                        (hasVisibleAudit && stableAnchorCount < hitCount ? '<span class="lisun-impact-badge is-warning">�ȶ�ê�� ' + stableAnchorCount + '/' + hitCount + ' ��</span>' : '') +
-                        (hardVisibleFailure ? '<span class="lisun-impact-badge is-warning">Ŀ���뷨δ��ʵ�������´���</span>' : (termWarningCount ? '<span class="lisun-impact-badge is-warning">����������ʾ���� ' + termWarningCount + ' ���������˶ԣ�</span>' : '')) +
-                        (termAnomalyCount ? '<span class="lisun-impact-badge is-warning">������쳣 ' + termAnomalyCount + ' ������</span>' : '') +
-                        (!applied && !hasVisibleAudit && appliedHitCount && unappliedCount ? '<span class="lisun-impact-badge is-applied">��Ӧ�� ' + appliedHitCount + ' ��</span>' : '') +
-                        (processCount ? '<span class="lisun-impact-badge is-warning">' + processLabel + processCount + ' ��</span>' : '') +
+                        '<span class="lisun-impact-badge' + modeClass + '">' + escHtml(applied ? '已应用' : (hardVisibleFailure ? '术语应用未完成' : (incomplete ? '增量翻译未完成' : (localOnly ? modeLabels.local_only : (modeLabels[item.mode] || item.mode || ''))))) + ' · ' + escHtml(countText) + '</span>' +
+                        '<span class="lisun-impact-badge">命中 ' + hitCount + ' 处</span>' +
+                        (hasVisibleAudit && stableAnchorCount < hitCount ? '<span class="lisun-impact-badge is-warning">稳定锚点 ' + stableAnchorCount + '/' + hitCount + ' 处</span>' : '') +
+                        (hardVisibleFailure ? '<span class="lisun-impact-badge is-warning">目标译法未落实，需重新处理</span>' : (termWarningCount ? '<span class="lisun-impact-badge is-warning">术语数量提示：少 ' + termWarningCount + ' 处（仅供核对）</span>' : '')) +
+                        (termAnomalyCount ? '<span class="lisun-impact-badge is-warning">术语表异常 ' + termAnomalyCount + ' 个段落</span>' : '') +
+                        (!applied && !hasVisibleAudit && appliedHitCount && unappliedCount ? '<span class="lisun-impact-badge is-applied">已应用 ' + appliedHitCount + ' 处</span>' : '') +
+                        (processCount ? '<span class="lisun-impact-badge is-warning">' + processLabel + processCount + ' 处</span>' : '') +
                     '</span>' +
                     (applied ? undoButton : '<button type="button" class="lisun-impact-single lisun-apply-single" data-post-id="' + escAttr(item.post_id) + '" data-retry-label="' + escAttr(singleButtonText) + '">' + escHtml(singleButtonText) + '</button>') +
                 '</summary>' +
                 '<div class="lisun-impact-article-content">' +
                     '<div class="lisun-impact-tabs">' +
-                        '<button type="button" class="lisun-impact-tab is-active" data-panel="context">���������� ' + contexts.length + '</button>' +
-                        '<button type="button" class="lisun-impact-tab lisun-application-history" data-panel="history" data-post-id="' + escAttr(item.post_id) + '">Ӧ�ü�¼</button>' +
+                        '<button type="button" class="lisun-impact-tab is-active" data-panel="context">命中上下文 ' + contexts.length + '</button>' +
+                        '<button type="button" class="lisun-impact-tab lisun-application-history" data-panel="history" data-post-id="' + escAttr(item.post_id) + '">应用记录</button>' +
                     '</div>' +
                     ((localOnly || incomplete || hardVisibleFailure) && item.last_error ? '<div class="lisun-impact-panel" style="border-left:3px solid #d63638;color:#8a2424;">' + escHtml(item.last_error) + '</div>' : '') +
-                    (termAnomalyCount ? '<div class="lisun-impact-panel" style="border-left:3px solid #dba617;color:#754b12;">�������鷢�� ' + termAnomalyCount + ' �������Ӣ��Ŀ����������������ԭ�Ĳ�һ�£����Ӣ�������˹��˶ԡ�</div>' : '') +
+                    (termAnomalyCount ? '<div class="lisun-impact-panel" style="border-left:3px solid #dba617;color:#754b12;">术语表检查发现 ' + termAnomalyCount + ' 个段落的英文目标术语数量与中文原文不一致，请打开英文译文人工核对。</div>' : '') +
                     escUnappliedMatches(item) +
                     '<div class="lisun-impact-panel lisun-impact-context-panel">' + escContexts(item).replace(/^<div class="lisun-impact-panel lisun-impact-context-panel">|<\/div>$/g, '') + '</div>' +
                     '<div class="lisun-application-history-box lisun-impact-panel" style="display:none;"></div>' +
@@ -1226,43 +1226,43 @@ jQuery(function ($) {
     }
 
     function escPostHistory(history) {
-        if (!history || !history.length) return '<span style="color:#999;">���޸����µ�Ӧ�ü�¼</span>';
-        var labels = {done:'�����', failed:'ʧ��', processing:'������', pending:'�Ŷ���', running:'������', finished_with_errors:'����ʧ��'};
-        var html = '<div style="border-left:3px solid #dcdcde;padding-left:10px;"><strong>Ӧ�ü�¼</strong><ul style="margin:4px 0 0 18px;">';
+        if (!history || !history.length) return '<span style="color:#999;">暂无该文章的应用记录</span>';
+        var labels = {done:'已完成', failed:'失败', processing:'处理中', pending:'排队中', running:'处理中', finished_with_errors:'部分失败'};
+        var html = '<div style="border-left:3px solid #dcdcde;padding-left:10px;"><strong>应用记录</strong><ul style="margin:4px 0 0 18px;">';
         $.each(history, function (_, item) {
-            var status = labels[item.status] || labels[item.batch_status] || item.status || '��';
+            var status = labels[item.status] || labels[item.batch_status] || item.status || '—';
             var warningOnly = item.warning_only || (item.post_apply_audit && (item.post_apply_audit.term_count_warning || parseInt(item.post_apply_audit.visible_missing_count || 0, 10) > 0));
-            if (warningOnly && status === '�����') status += '���о��棩';
-            var line = escHtml(item.time || item.updated_at || '') + ' �� ' + escHtml(status) +
-                ' �� ' + applicationScopeLabel(item) +
-                ' �� ���� ' + escHtml(item.updated || 0) +
-                ' �� ���� ' + escHtml(item.requests || 0);
+            if (warningOnly && status === '已完成') status += '（有警告）';
+            var line = escHtml(item.time || item.updated_at || '') + ' · ' + escHtml(status) +
+                ' · ' + applicationScopeLabel(item) +
+                ' · 更新 ' + escHtml(item.updated || 0) +
+                ' · 请求 ' + escHtml(item.requests || 0);
             var postAudit = item.post_apply_audit || {};
             // After an attempt, the committed-revision audit is authoritative;
             // it explains visible coverage separately from stable anchors.
             var audit = Object.keys(postAudit).length ? postAudit : (item.audit || {});
-            if (audit.hit_count) line += ' �� ���� ' + escHtml(audit.hit_count) + ' ��';
+            if (audit.hit_count) line += ' · 命中 ' + escHtml(audit.hit_count) + ' 处';
             if (Object.prototype.hasOwnProperty.call(audit, 'visible_applied_count')) {
-                line += ' �� �ɼ����� ' + escHtml(audit.visible_applied_count) + '/' + escHtml(audit.hit_count || 0) + ' ��';
+                line += ' · 可见译文 ' + escHtml(audit.visible_applied_count) + '/' + escHtml(audit.hit_count || 0) + ' 处';
                 if (audit.stable_anchor_count < audit.hit_count) {
-                    line += ' �� �ȶ�ê�� ' + escHtml(audit.stable_anchor_count || 0) + '/' + escHtml(audit.hit_count || 0) + ' ��';
+                    line += ' · 稳定锚点 ' + escHtml(audit.stable_anchor_count || 0) + '/' + escHtml(audit.hit_count || 0) + ' 处';
                 }
             } else if (item.applied_occurrences || postAudit.stable_anchor_count) {
-                line += ' �� ��Ӧ�� ' + escHtml(item.applied_occurrences || postAudit.stable_anchor_count) + ' ��';
+                line += ' · 已应用 ' + escHtml(item.applied_occurrences || postAudit.stable_anchor_count) + ' 处';
             }
             var termWarningCount = parseInt(audit.term_count_warning_count || audit.visible_missing_count || 0, 10) || 0;
             var termCountWarning = !!(audit.term_count_warning || termWarningCount > 0);
             if (termWarningCount) {
-                line += ' �� ����������ʾ���� ' + escHtml(termWarningCount) + ' ���������˶ԣ�';
+                line += ' · 术语数量提示：少 ' + escHtml(termWarningCount) + ' 处（仅供核对）';
             }
             var completedIncremental = item.status === 'done' && item.mode === 'incremental';
-            if (!termCountWarning && audit.unapplied_count) line += ' �� ' + (completedIncremental ? '��ͨ���������� ' : '���������� ') + escHtml(audit.unapplied_count) + ' ��';
-            if (audit.resolved_count) line += ' �� ��ͨ���������� ' + escHtml(audit.resolved_count) + ' ��';
-            if (item.error) line += ' �� ' + escHtml(item.error);
+            if (!termCountWarning && audit.unapplied_count) line += ' · ' + (completedIncremental ? '已通过增量处理 ' : '待增量处理 ') + escHtml(audit.unapplied_count) + ' 处';
+            if (audit.resolved_count) line += ' · 已通过增量处理 ' + escHtml(audit.resolved_count) + ' 处';
+            if (item.error) line += ' · ' + escHtml(item.error);
             if (audit.unapplied && audit.unapplied.length) {
-                line += '<details style="margin-top:5px;"><summary style="cursor:pointer;color:#754b12;">' + (termCountWarning ? '�鿴����������ʾ��ϸ' : '�鿴����������ϸ') + '</summary><ul style="margin:5px 0 0 18px;">';
+                line += '<details style="margin-top:5px;"><summary style="cursor:pointer;color:#754b12;">' + (termCountWarning ? '查看术语数量提示明细' : '查看增量处理明细') + '</summary><ul style="margin:5px 0 0 18px;">';
                 $.each(audit.unapplied.slice(0, 200), function (_, hit) {
-                    line += '<li>' + escHtml(hit.source_path || hit.unit_key || '') + '��' + escHtml(hit.reason || 'δ�ҵ���Ӧ��ê��') + renderTermComparison(hit) + '</li>';
+                    line += '<li>' + escHtml(hit.source_path || hit.unit_key || '') + '：' + escHtml(hit.reason || '未找到可应用锚点') + renderTermComparison(hit) + '</li>';
                 });
                 line += '</ul></details>';
             }
@@ -1272,43 +1272,43 @@ jQuery(function ($) {
     }
 
     function escHistory(history) {
-        if (!history || !history.length) return '<p style="color:#999;">����Ӧ�ü�¼</p>';
-        var statusLabels = {queued:'�Ŷ���', processing:'������', done:'�����', finished_with_errors:'����ʧ��', failed:'ʧ��'};
-        var html = '<table class="widefat striped" style="margin-top:8px;"><thead><tr><th>��Χ</th><th>����/����</th><th>״̬</th><th>ʱ��</th><th>����</th></tr></thead><tbody>';
+        if (!history || !history.length) return '<p style="color:#999;">暂无应用记录</p>';
+        var statusLabels = {queued:'排队中', processing:'处理中', done:'已完成', finished_with_errors:'部分失败', failed:'失败'};
+        var html = '<table class="widefat striped" style="margin-top:8px;"><thead><tr><th>范围</th><th>文章/数量</th><th>状态</th><th>时间</th><th>批次</th></tr></thead><tbody>';
         $.each(history, function (_, item) {
             var scope = applicationScopeLabel(item);
-            if (item.details && item.details.manual_unlock) scope += '���˹�������';
+            if (item.details && item.details.manual_unlock) scope += '（人工解锁）';
             var target = applicationScopeTarget(item);
-            html += '<tr><td>' + scope + '</td><td>' + target + '</td><td>' + escHtml(statusLabels[item.status] || item.status || '��') +
+            html += '<tr><td>' + scope + '</td><td>' + target + '</td><td>' + escHtml(statusLabels[item.status] || item.status || '—') +
                 '</td><td>' + escHtml(item.created_at || '') + '</td><td><code>' + escHtml(item.batch_id || '') + '</code></td></tr>';
             if (item.applications && item.applications.length) {
-                html += '<tr><td colspan="5"><details><summary>�鿴��������ϸ��' + item.applications.length + ' ƪ��</summary><ul style="margin:6px 0 0 18px;">';
+                html += '<tr><td colspan="5"><details><summary>查看本批次明细（' + item.applications.length + ' 篇）</summary><ul style="margin:6px 0 0 18px;">';
                 $.each(item.applications, function (_, application) {
                     var appStatus = (application.local_only || (application.status === 'done' && application.pushed === false))
-                        ? 'ʧ�ܣ������Ѹ��£�Զ�̴����ƣ�'
-                        : (application.status === 'done' ? '�����' : 'ʧ��');
+                        ? '失败（本地已更新，远程待重推）'
+                        : (application.status === 'done' ? '已完成' : '失败');
                     var appText = '#' + escHtml(application.post_id) + ' ' + escHtml(application.title || '') +
-                        '��' + appStatus + '������ ' + escHtml(application.updated || 0) + '������ ' + escHtml(application.reused_units || 0) +
-                        '������ ' + escHtml(application.requests || 0);
-                    if (application.error) appText += ' �� ' + escHtml(application.error);
+                        '：' + appStatus + '，更新 ' + escHtml(application.updated || 0) + '，复用 ' + escHtml(application.reused_units || 0) +
+                        '，请求 ' + escHtml(application.requests || 0);
+                    if (application.error) appText += ' — ' + escHtml(application.error);
                     html += '<li>' + appText + '</li>';
                 });
                 html += '</ul></details></td></tr>';
             }
         });
-        return '<h3 style="margin-bottom:4px;">Ӧ�����μ�¼</h3>' + html + '</tbody></table>';
+        return '<h3 style="margin-bottom:4px;">应用批次记录</h3>' + html + '</tbody></table>';
     }
 
     function applicationScopeLabel(item) {
         item = item || {};
         var scope = String(item.scope || 'legacy');
         var count = parseInt(item.total_jobs || 0, 10) || 0;
-        if (scope === 'single') return '��ƪ';
-        if (scope === 'selected') return count === 1 ? 'ѡ����ƪ' : 'ѡ����Χ';
-        if (scope === 'all') return 'ȫ����������';
+        if (scope === 'single') return '单篇';
+        if (scope === 'selected') return count === 1 ? '选定单篇' : '选定范围';
+        if (scope === 'all') return '全部命中文章';
         // Old rows did not retain whether the user selected a subset. Do not
         // mislabel them as a global run merely because they contain >1 page.
-        return '�ɰ�����';
+        return '旧版批量';
     }
 
     function applicationScopeTarget(item) {
@@ -1320,7 +1320,7 @@ jQuery(function ($) {
             && item.applications && item.applications.length) {
             return '#' + escHtml(item.applications[0].post_id || '') + ' ' + escHtml(item.applications[0].title || '');
         }
-        return escHtml(item.total_jobs || 0) + ' ƪ';
+        return escHtml(item.total_jobs || 0) + ' 篇';
     }
 
     function escApplicationState(state) {
@@ -1328,21 +1328,21 @@ jQuery(function ($) {
         var latest = state.latest || null;
         var status = state.status || 'pending';
         var title = status === 'applied'
-            ? '��Ӧ��'
+            ? '已应用'
             : (status === 'partial'
-                ? '��Ӧ�ã�����������������'
-                : (status === 'changed' ? '�����ѱ������Ҫ����Ӧ��'
-                    : (status === 'unlocked' ? '���˹���������ȷ������Ӧ��' : '������')));
+                ? '已应用，发现新增命中文章'
+                : (status === 'changed' ? '术语已变更，需要重新应用'
+                    : (status === 'unlocked' ? '已人工解锁，请确认重新应用' : '待处理')));
         var className = status === 'applied' ? ' is-applied' : (status === 'changed' || status === 'unlocked' ? ' is-changed' : '');
         var meta = [];
         if (latest) {
-            if (latest.created_at || latest.updated_at) meta.push('Ӧ��ʱ�䣺' + (latest.updated_at || latest.created_at));
-            if (latest.batch_id) meta.push('���Σ�' + latest.batch_id);
-            meta.push('��Χ��' + applicationScopeLabel(latest));
+            if (latest.created_at || latest.updated_at) meta.push('应用时间：' + (latest.updated_at || latest.created_at));
+            if (latest.batch_id) meta.push('批次：' + latest.batch_id);
+            meta.push('范围：' + applicationScopeLabel(latest));
         }
         return '<div class="lisun-impact-state' + className + '">' +
             '<span class="lisun-impact-state-title">' + escHtml(title) + '</span>' +
-            (meta.length ? '<span class="lisun-impact-state-meta">' + escHtml(meta.join(' �� ')) + '</span>' : '') +
+            (meta.length ? '<span class="lisun-impact-state-meta">' + escHtml(meta.join(' · ')) + '</span>' : '') +
             '</div>';
     }
 
@@ -1353,28 +1353,28 @@ jQuery(function ($) {
         var pendingCount = typeof state.pending_articles === 'number'
             ? state.pending_articles
             : $.grep(data.candidates || [], function (item) { return item.status !== 'applied'; }).length;
-        $('#lisun-glossary-term-pill').text((data.term.zh || '') + ' �� ' + (data.term.en || ''));
+        $('#lisun-glossary-term-pill').text((data.term.zh || '') + ' → ' + (data.term.en || ''));
         var summaryHtml = escApplicationState(state);
         if (state.status === 'applied') {
             var latest = state.latest || {};
             summaryHtml +=
-                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">��Ӧ������</div><div class="lisun-impact-stat-number">' + escHtml(state.applied_articles || 0) + '<small>ƪ</small></div><div class="lisun-impact-stat-note">��ǰ���о������ظ�Ӧ��</div></div>' +
-                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">Ӧ�÷�Χ</div><div class="lisun-impact-stat-number">' + escHtml(applicationScopeLabel(latest)) + '</div><div class="lisun-impact-stat-note">�ϴγɹ�Ӧ�÷�Χ</div></div>' +
-                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">Ӧ������</div><div class="lisun-impact-stat-number" style="font-size:13px;word-break:break-all;">' + escHtml(latest.batch_id || '��') + '</div><div class="lisun-impact-stat-note">��¼����</div></div>' +
-                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">Ӧ��ʱ��</div><div class="lisun-impact-stat-number" style="font-size:13px;">' + escHtml(latest.updated_at || latest.created_at || '��') + '</div><div class="lisun-impact-stat-note">����״̬δ�仯</div></div>';
+                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">已应用文章</div><div class="lisun-impact-stat-number">' + escHtml(state.applied_articles || 0) + '<small>篇</small></div><div class="lisun-impact-stat-note">当前命中均无需重复应用</div></div>' +
+                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">应用范围</div><div class="lisun-impact-stat-number">' + escHtml(applicationScopeLabel(latest)) + '</div><div class="lisun-impact-stat-note">上次成功应用范围</div></div>' +
+                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">应用批次</div><div class="lisun-impact-stat-number" style="font-size:13px;word-break:break-all;">' + escHtml(latest.batch_id || '—') + '</div><div class="lisun-impact-stat-note">记录批次</div></div>' +
+                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">应用时间</div><div class="lisun-impact-stat-number" style="font-size:13px;">' + escHtml(latest.updated_at || latest.created_at || '—') + '</div><div class="lisun-impact-stat-note">术语状态未变化</div></div>';
         } else {
             summaryHtml +=
-                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">��ֱ���滻</div><div class="lisun-impact-stat-number">' + escHtml(s.direct_articles || 0) + '<small>ƪ / ' + escHtml(s.direct_occurrences || 0) + '��</small></div><div class="lisun-impact-stat-note">������ DeepL</div></div>' +
-                '<div class="lisun-impact-stat is-accent"><div class="lisun-impact-stat-label">����������</div><div class="lisun-impact-stat-number">' + escHtml(s.incremental_articles || 0) + '<small>ƪ / ' + escHtml(s.incremental_units || 0) + '��Ԫ</small></div><div class="lisun-impact-stat-note">Ԥ�� ' + escHtml(s.estimated_characters || 0) + ' �ַ�</div></div>' +
-                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">�ɰ�ɰ�ȫ�滻</div><div class="lisun-impact-stat-number">' + escHtml(s.legacy_articles || 0) + '<small>ƪ</small></div><div class="lisun-impact-stat-note">��ֱ�Ӹ��þɰ�����</div></div>' +
-                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">����</div><div class="lisun-impact-stat-number">' + escHtml(s.skipped_articles || 0) + '<small>ƪ</small></div><div class="lisun-impact-stat-note">����/Դ�ı仯/�޿ɿ�ê��</div></div>';
+                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">可直接替换</div><div class="lisun-impact-stat-number">' + escHtml(s.direct_articles || 0) + '<small>篇 / ' + escHtml(s.direct_occurrences || 0) + '处</small></div><div class="lisun-impact-stat-note">不调用 DeepL</div></div>' +
+                '<div class="lisun-impact-stat is-accent"><div class="lisun-impact-stat-label">需增量翻译</div><div class="lisun-impact-stat-number">' + escHtml(s.incremental_articles || 0) + '<small>篇 / ' + escHtml(s.incremental_units || 0) + '单元</small></div><div class="lisun-impact-stat-note">预计 ' + escHtml(s.estimated_characters || 0) + ' 字符</div></div>' +
+                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">旧版可安全替换</div><div class="lisun-impact-stat-number">' + escHtml(s.legacy_articles || 0) + '<small>篇</small></div><div class="lisun-impact-stat-note">可直接复用旧版译文</div></div>' +
+                '<div class="lisun-impact-stat"><div class="lisun-impact-stat-label">跳过</div><div class="lisun-impact-stat-number">' + escHtml(s.skipped_articles || 0) + '<small>篇</small></div><div class="lisun-impact-stat-note">锁定/源文变化/无可靠锚点</div></div>';
             if (s.local_only_articles) {
-                summaryHtml += '<div class="lisun-impact-stat is-warning"><div class="lisun-impact-stat-label">�����Ѹ���</div><div class="lisun-impact-stat-number">' + escHtml(s.local_only_articles) + '<small>ƪ</small></div><div class="lisun-impact-stat-note">Զ������ʧ�ܣ���������Ӧ��</div></div>';
+                summaryHtml += '<div class="lisun-impact-stat is-warning"><div class="lisun-impact-stat-label">本地已更新</div><div class="lisun-impact-stat-number">' + escHtml(s.local_only_articles) + '<small>篇</small></div><div class="lisun-impact-stat-note">远程推送失败，不能算已应用</div></div>';
             }
         }
         $('#lisun-glossary-summary').html(summaryHtml);
 
-        // Ԥ��ˢ�º��Ѳ��ں�ѡ������£���Ӧ��/�����������ٱ�����ѡ��
+        // 预览刷新后，已不在候选里的文章（已应用/被锁定）不再保留勾选。
         var candidateIds = {};
         $.each(data.candidates || [], function (_, item) {
             if (item.status !== 'applied') candidateIds[item.post_id] = true;
@@ -1387,18 +1387,18 @@ jQuery(function ($) {
 
         var selectableCount = $.grep(data.candidates || [], function (item) { return item.status !== 'applied'; }).length;
         var selectbar = '<div class="lisun-impact-selectbar">' +
-            '<label><input type="checkbox" id="lisun-impact-selectall"> ȫѡ</label>' +
-            '<span class="lisun-impact-selected-count">��ѡ 0 ƪ</span>' +
-            '<span class="lisun-impact-selectbar-hint">��ѡ��ײ���ťֻӦ��ѡ�����£�����ѡ��Ӧ��ȫ�� ' + selectableCount + ' ƪ���������¡�</span>' +
+            '<label><input type="checkbox" id="lisun-impact-selectall"> 全选</label>' +
+            '<span class="lisun-impact-selected-count">已选 0 篇</span>' +
+            '<span class="lisun-impact-selectbar-hint">勾选后底部按钮只应用选中文章；不勾选则应用全部 ' + selectableCount + ' 篇待处理文章。</span>' +
         '</div>';
 
         $('#lisun-glossary-impact-body').html(
             (selectableCount ? selectbar : '') +
             '<div class="lisun-impact-articles">' + escCandidates(data.candidates, data.history) + '</div>' +
-            '<details class="lisun-impact-skipped"><summary>���������£�' + escHtml(s.skipped_articles || 0) + ' ƪ��</summary>' +
-                (staleItems.length ? '<div class="lisun-stale-retranslate-actions"><span>���� ' + staleItems.length + ' ƪ�������·��벢���ͣ�����ɼ�¼���ᱻ�����</span><button type="button" class="button button-primary lisun-retranslate-stale-all">�������·����� ' + staleItems.length + ' ƪ</button></div>' : '') +
+            '<details class="lisun-impact-skipped"><summary>跳过的文章（' + escHtml(s.skipped_articles || 0) + ' 篇）</summary>' +
+                (staleItems.length ? '<div class="lisun-stale-retranslate-actions"><span>其中 ' + staleItems.length + ' 篇可以重新翻译并推送，已完成记录不会被清除。</span><button type="button" class="button button-primary lisun-retranslate-stale-all">批量重新翻译这 ' + staleItems.length + ' 篇</button></div>' : '') +
                 '<ul>' + escList(data.skipped) + '</ul></details>' +
-            '<p class="lisun-impact-empty">��ȷ��Ӧ�á�ֻ������ǰ�ɰ�ȫ���µ����£��ɻָ����������¿ɵ������������·��룬���������Բ��ᱻ�޸ġ�</p>'
+            '<p class="lisun-impact-empty">“确认应用”只处理当前可安全更新的文章；可恢复的跳过文章可单独或批量重新翻译，锁定文章仍不会被修改。</p>'
         );
         $('#lisun-glossary-history').html(escHistory(data.history || []));
         refreshApplyButtonLabel();
@@ -1417,11 +1417,11 @@ jQuery(function ($) {
         var n = selectedCount();
         var text;
         if (!currentPendingCount) {
-            text = currentAppStateStatus === 'applied' ? '��Ӧ��' : 'û�п�Ӧ������';
+            text = currentAppStateStatus === 'applied' ? '已应用' : '没有可应用文章';
         } else if (n > 0) {
-            text = 'ȷ��Ӧ��ѡ�е� ' + n + ' ƪ';
+            text = '确认应用选中的 ' + n + ' 篇';
         } else {
-            text = 'ȷ�ϲ�ȫ�ָ�����������';
+            text = '确认并全局更新现有译文';
         }
         $btn.text(text).prop('disabled', impactModalLocked || !currentPendingCount);
     }
@@ -1430,7 +1430,7 @@ jQuery(function ($) {
         var $body = $('#lisun-glossary-impact-body');
         var $boxes = $body.find('.lisun-impact-check');
         var n = selectedCount();
-        $body.find('.lisun-impact-selected-count').text('��ѡ ' + n + ' ƪ');
+        $body.find('.lisun-impact-selected-count').text('已选 ' + n + ' 篇');
         var $all = $('#lisun-impact-selectall');
         if ($all.length) {
             $all.prop('checked', $boxes.length > 0 && n === $boxes.length);
@@ -1471,13 +1471,13 @@ jQuery(function ($) {
             _nonce: nonce
         }, function (res) {
             if (!res.success) {
-                $('#lisun-glossary-batch-status').text((res.data && res.data.message) || '��������״̬��ѯʧ��');
+                $('#lisun-glossary-batch-status').text((res.data && res.data.message) || '增量翻译状态查询失败');
                 return;
             }
             var c = res.data.counts || {};
             $('#lisun-glossary-batch-status').text(
-                '�������룺��� ' + (c.done || 0) + '�������� ' + (c.processing || 0) +
-                '���ȴ� ' + (c.pending || 0) + '��ʧ�� ' + (c.failed || 0)
+                '增量翻译：完成 ' + (c.done || 0) + '，处理中 ' + (c.processing || 0) +
+                '，等待 ' + (c.pending || 0) + '，失败 ' + (c.failed || 0)
             );
             if (res.data.finished) {
                 activeStaleJobIds = [];
@@ -1488,14 +1488,14 @@ jQuery(function ($) {
                 staleTimer = setTimeout(pollStaleTranslations, 3000);
             }
         }).fail(function () {
-            $('#lisun-glossary-batch-status').text('��������״̬��ѯʧ�ܣ��ɹرմ��ڣ���̨���л��������');
+            $('#lisun-glossary-batch-status').text('增量翻译状态查询失败，可关闭窗口；后台队列会继续处理');
         });
     }
 
     /**
      * POST an admin-ajax action as JSON.
      *
-     * The enqueue button used to show a bare ������ʧ�ܡ� for every transport
+     * The enqueue button used to show a bare 「请求失败」 for every transport
      * problem, which hid whether the server rejected the call or the request
      * never arrived (stale keep-alive socket, CDN/WAF hiccup, expired nonce).
      * Enqueueing is idempotent server-side (enqueue_job reuses an existing
@@ -1504,10 +1504,10 @@ jQuery(function ($) {
     function lisunDescribeFailure(xhr) {
         var status = xhr && xhr.status ? xhr.status : 0;
         var hint;
-        if (status === 0) hint = '����� CDN �жϣ����Զ����� 1 �Σ�';
-        else if (status === 401 || status === 403) hint = '��¼��ȫ������ʧЧ����ˢ��ҳ�������';
-        else if (status === 404) hint = '�ӿڲ����ڣ���ȷ�ϲ���ļ��Ѹ���';
-        else if (status >= 500) hint = '������������� lisun-debug.log�������Ժ�����';
+        if (status === 0) hint = '网络或 CDN 中断（已自动重试 1 次）';
+        else if (status === 401 || status === 403) hint = '登录或安全令牌已失效，请刷新页面后重试';
+        else if (status === 404) hint = '接口不存在，请确认插件文件已更新';
+        else if (status >= 500) hint = '服务器错误（详见 lisun-debug.log），请稍后重试';
         else hint = 'HTTP ' + status;
         var body = String((xhr && xhr.responseText) || '').replace(/\s+/g, ' ').slice(0, 140);
         return hint + (body ? '\n\n' + body : '');
@@ -1569,10 +1569,10 @@ jQuery(function ($) {
     function queueStaleTranslations(postIds, $button) {
         postIds = $.map(postIds || [], function (id) { return parseInt(id, 10) || null; });
         if (!activeImpact || !postIds.length) return;
-        if (!confirm('ȷ�Ͻ��� ' + postIds.length + ' ƪ���¼�������������У�\n\nϵͳ�Ḵ��δ�仯��Ԫ����ɺ��Զ�����Ӣ��վ��')) return;
+        if (!confirm('确认将这 ' + postIds.length + ' 篇文章加入增量翻译队列？\n\n系统会复用未变化单元，完成后自动推送英文站。')) return;
 
         clearTimeout(staleTimer);
-        $button.prop('disabled', true).text('����С�');
+        $button.prop('disabled', true).text('入队中…');
         lisunPostJson({
             action: 'lisun_glossary_retranslate_stale',
             term_id: activeImpact.term.term_id,
@@ -1580,36 +1580,36 @@ jQuery(function ($) {
             _nonce: nonce
         }).done(function (res) {
             if (!res.success || !res.data.queued) {
-                $button.prop('disabled', false).text(postIds.length === 1 ? '��������' : '������������');
-                alert((res.data && res.data.message) || '�����������ʧ��');
+                $button.prop('disabled', false).text(postIds.length === 1 ? '增量翻译' : '批量增量翻译');
+                alert((res.data && res.data.message) || '增量翻译入队失败');
                 return;
             }
             activeStaleJobIds = res.data.job_ids || [];
-            $button.text('�����');
+            $button.text('已入队');
             $('.lisun-retranslate-stale-single, .lisun-retranslate-stale-all').prop('disabled', true);
-            $('#lisun-glossary-batch-status').text(res.data.message || '�����������������');
+            $('#lisun-glossary-batch-status').text(res.data.message || '增量翻译任务已入队');
             pollStaleTranslations();
         }).fail(function (xhr, reason) {
             var why = reason || lisunDescribeFailure(xhr);
             // Admin-ajax path failed: fall back to the REST channel the article
             // metabox uses, so the term workflow does not require opening each
             // article by hand.
-            $('#lisun-glossary-batch-status').text('admin-ajax ͨ��ʧ�ܣ����ڸ��� REST ͨ����ӡ�');
+            $('#lisun-glossary-batch-status').text('admin-ajax 通道失败，正在改用 REST 通道入队…');
             lisunRestEnqueue(postIds).done(function (queued, failedIds) {
                 if (queued > 0) {
                     activeStaleJobIds = [];
-                    $button.text('�����');
+                    $button.text('已入队');
                     $('.lisun-retranslate-stale-single, .lisun-retranslate-stale-all').prop('disabled', true);
                     $('#lisun-glossary-batch-status').text(
-                        '��ͨ�� REST ͨ����� ' + queued + ' ƪ'
-                        + (failedIds.length ? '��ʧ�� ' + failedIds.length + ' ƪ��' : '')
-                        + '����̨���л����������admin-ajax ʧ��ԭ��' + why
+                        '已通过 REST 通道入队 ' + queued + ' 篇'
+                        + (failedIds.length ? '（失败 ' + failedIds.length + ' 篇）' : '')
+                        + '；后台队列会继续处理。admin-ajax 失败原因：' + why
                     );
                     return;
                 }
-                $button.prop('disabled', false).text(postIds.length === 1 ? '��������' : '������������');
-                alert('�����������ʧ�ܣ�' + why
-                    + '\n\n�ѳ��� REST ͨ�����ˣ�ͬ��δ�ɹ���');
+                $button.prop('disabled', false).text(postIds.length === 1 ? '增量翻译' : '批量增量翻译');
+                alert('增量翻译入队失败：' + why
+                    + '\n\n已尝试 REST 通道回退，同样未成功。');
             });
         });
     }
@@ -1623,23 +1623,23 @@ jQuery(function ($) {
             if (!res.success) return;
             if (activeBatchId !== pollingBatchId) return;
             var d = res.data, c = d.counts;
-            $('#lisun-glossary-batch-status').text('����״̬��' + d.status + '���ɹ� ' + c.done + (c.warnings ? '���о��� ' + c.warnings + '��' : '') + '�������� ' + c.processing + '���ȴ� ' + c.pending + '��ʧ�� ' + c.failed + '������ ' + c.skipped + (c.local_only ? '�������Ѹ��´����� ' + c.local_only : ''));
+            $('#lisun-glossary-batch-status').text('批次状态：' + d.status + '；成功 ' + c.done + (c.warnings ? '（有警告 ' + c.warnings + '）' : '') + '，处理中 ' + c.processing + '，等待 ' + c.pending + '，失败 ' + c.failed + '，跳过 ' + c.skipped + (c.local_only ? '，本地已更新待重推 ' + c.local_only : ''));
             renderBatchErrors(d.details || {});
             $('#lisun-glossary-apply-retry').toggle(c.failed > 0);
             if (d.status === 'running') {
-                if (activeApplyButton) activeApplyButton.text('�����С�');
+                if (activeApplyButton) activeApplyButton.text('处理中…');
                 batchTimer = setTimeout(pollBatch, 3000);
             } else {
                 setImpactModalLocked(false);
                 if (activeApplyButton) {
-                    activeApplyButton.prop('disabled', false).text(d.status === 'done' ? '�����' : '����ʧ��');
+                    activeApplyButton.prop('disabled', false).text(d.status === 'done' ? '已完成' : '处理失败');
                 }
                 refreshHistory();
                 loadPage(currentPage);
                 refreshImpactPreview();
             }
         }).fail(function () {
-            $('#lisun-glossary-batch-status').text('״̬��ѯʧ�ܣ���ˢ��Ӱ�췶Χ�鿴Ӧ�ü�¼');
+            $('#lisun-glossary-batch-status').text('状态查询失败，请刷新影响范围查看应用记录');
         });
     }
 
@@ -1650,19 +1650,19 @@ jQuery(function ($) {
             $('#lisun-glossary-batch-errors').empty();
             return;
         }
-        var html = '<details class="lisun-batch-errors" open><summary>ʧ����ϸ��' + failed.length + ' ƪ��</summary><ul>';
+        var html = '<details class="lisun-batch-errors" open><summary>失败明细（' + failed.length + ' 篇）</summary><ul>';
         $.each(failed, function (_, item) {
-            var line = '<strong>#' + escHtml(item.post_id || '') + ' ' + escHtml(item.title || '') + '</strong>��' +
-                escHtml(item.error || 'δ���ؾ������');
+            var line = '<strong>#' + escHtml(item.post_id || '') + ' ' + escHtml(item.title || '') + '</strong>：' +
+                escHtml(item.error || '未返回具体错误');
             var meta = [];
-            if (item.error_code) meta.push('������ ' + item.error_code);
-            if (item.unit_key) meta.push('��Ԫ ' + item.unit_key);
-            if (item.batch_index !== undefined) meta.push('�������� ' + item.batch_index);
-            if (item.trace_id) meta.push('׷�� ID ' + item.trace_id);
-            if (meta.length) line += '<div class="lisun-batch-error-meta">' + escHtml(meta.join(' �� ')) + '</div>';
+            if (item.error_code) meta.push('错误码 ' + item.error_code);
+            if (item.unit_key) meta.push('单元 ' + item.unit_key);
+            if (item.batch_index !== undefined) meta.push('批次索引 ' + item.batch_index);
+            if (item.trace_id) meta.push('追踪 ID ' + item.trace_id);
+            if (meta.length) line += '<div class="lisun-batch-error-meta">' + escHtml(meta.join(' · ')) + '</div>';
             $.each(item.error_occurrences || [], function (_, occurrence) {
-                line += '<div class="lisun-batch-error-meta">�����ǩ ' + escHtml(occurrence.source_text || occurrence.occurrence_id || '') +
-                    '��������' + escHtml(occurrence.expected || '') + '����DeepL ���ء�' + escHtml(occurrence.actual || '') + '��</div>';
+                line += '<div class="lisun-batch-error-meta">术语标签 ' + escHtml(occurrence.source_text || occurrence.occurrence_id || '') +
+                    '：期望“' + escHtml(occurrence.expected || '') + '”，DeepL 返回“' + escHtml(occurrence.actual || '') + '”</div>';
             });
             html += '<li>' + line + '</li>';
         });
@@ -1673,7 +1673,7 @@ jQuery(function ($) {
     $('#lisun-glossary-tbody').on('click', '.lisun-glossary-impact', function (e) {
         e.stopPropagation();
         var termId = String($(this).closest('tr').data('term-id') || '');
-        if (!termId) { alert('������ȱ���ȶ� ID�������±��������'); return; }
+        if (!termId) { alert('该术语缺少稳定 ID，请重新保存后再试'); return; }
         activeImpact = null; activeBatchId = ''; activeApplyButton = null;
         selectedPostIds = {};
         currentPendingCount = 0; currentAppStateStatus = '';
@@ -1681,23 +1681,23 @@ jQuery(function ($) {
         clearTimeout(staleTimer);
         activeStaleJobIds = [];
         setImpactModalLocked(false);
-        $('#lisun-glossary-term-pill').text('��');
+        $('#lisun-glossary-term-pill').text('—');
         $('#lisun-glossary-summary').empty();
-        $('#lisun-glossary-impact-body').text('����ɨ����Ӱ�����¡�');
+        $('#lisun-glossary-impact-body').text('正在扫描受影响文章…');
         $('#lisun-glossary-batch-status').text('');
         $('#lisun-glossary-batch-errors').empty();
         $('#lisun-glossary-apply-retry').hide();
-        $('#lisun-glossary-apply-confirm').prop('disabled', true).text('ȷ�ϲ�ȫ�ָ�����������');
+        $('#lisun-glossary-apply-confirm').prop('disabled', true).text('确认并全局更新现有译文');
         $('#lisun-glossary-manual-unlock').hide().prop('disabled', false);
         $('#lisun-glossary-impact-modal').show();
         $.post(ajaxurl, {action:'lisun_glossary_impact_preview', term_id:termId, _nonce:nonce}, function(res) {
-            if (!res.success) { $('#lisun-glossary-impact-body').text(res.data.message || 'ɨ��ʧ��'); return; }
+            if (!res.success) { $('#lisun-glossary-impact-body').text(res.data.message || '扫描失败'); return; }
             activeImpact = res.data;
             renderImpact(activeImpact);
-        }).fail(function () { $('#lisun-glossary-impact-body').text('ɨ������ʧ��'); });
+        }).fail(function () { $('#lisun-glossary-impact-body').text('扫描请求失败'); });
     });
 
-    // ��ֹ��ѡʱð�ݵ� <summary>������չ��/�۵����顣
+    // 阻止勾选时冒泡到 <summary>，避免展开/折叠详情。
     $('#lisun-glossary-impact-body').on('click', '.lisun-impact-check', function (e) {
         e.stopPropagation();
     });
@@ -1716,7 +1716,7 @@ jQuery(function ($) {
         syncSelectbarState();
         refreshApplyButtonLabel();
     });
-    // ȫѡ / ȫ��ѡ
+    // 全选 / 全不选
     $('#lisun-glossary-impact-body').on('change', '#lisun-impact-selectall', function (e) {
         var checked = this.checked;
         $('#lisun-glossary-impact-body .lisun-impact-check').each(function () {
@@ -1742,12 +1742,12 @@ jQuery(function ($) {
         var $btn = $(this);
         activeApplyButton = $btn;
         var postId = parseInt($btn.data('post-id'), 10);
-        var retryLabel = String($btn.data('retry-label') || '��ƪӦ��');
+        var retryLabel = String($btn.data('retry-label') || '单篇应用');
         if (!postId) return;
-        if (!confirm(retryLabel === '������������'
-            ? 'ȷ���������������� 1 ƪ���£�\n\n���λ����·�����Ӱ�쵥Ԫ��������ɺ����¼�����'
-            : 'ȷ��ֻӦ�õ��� 1 ƪ���£�')) return;
-        $btn.prop('disabled', true).text('����С�');
+        if (!confirm(retryLabel === '重新增量翻译'
+            ? '确认重新增量翻译这 1 篇文章？\n\n本次会重新翻译受影响单元，并在完成后重新检查术语。'
+            : '确认只应用到这 1 篇文章？')) return;
+        $btn.prop('disabled', true).text('入队中…');
         setImpactModalLocked(true);
         lisunPostJson({
             action: 'lisun_glossary_apply_single',
@@ -1759,18 +1759,18 @@ jQuery(function ($) {
             if (!res.success) {
                 setImpactModalLocked(false);
                 $btn.prop('disabled', false).text(retryLabel);
-                alert(res.data.message || '��ƪӦ��ʧ��');
+                alert(res.data.message || '单篇应用失败');
                 return;
             }
             activeBatchId = res.data.batch_id;
-            $btn.text('�����С�');
-            $('#lisun-glossary-batch-status').text(res.data.message || '��ƪӦ�����������');
+            $btn.text('处理中…');
+            $('#lisun-glossary-batch-status').text(res.data.message || '单篇应用任务已入队');
             refreshHistory();
             pollBatch();
         }).fail(function (xhr, reason) {
             setImpactModalLocked(false);
             $btn.prop('disabled', false).text(retryLabel);
-            alert('��ƪӦ��ʧ�ܣ�' + (reason || lisunDescribeFailure(xhr)));
+            alert('单篇应用失败：' + (reason || lisunDescribeFailure(xhr)));
         });
     });
 
@@ -1790,10 +1790,10 @@ jQuery(function ($) {
         var hasNewer = String($btn.data('has-newer') || '') === '1';
         if (!postId || !batchId || !revId) return;
         var confirmMessage = hasNewer
-            ? '��ƪ����Ӧ��������Ѿ��������µ����ġ�\n\n����������ָ���Ӧ������֮ǰ�İ汾��������Ӧ�ú�����ĺ��޸ģ����ȷ���������Ӧ�ò������ڱ�ƪ��������ȷ����������\n\n�Ƿ������'
-            : '������һƪ������Ӧ�ã�\n\n�����ƪӢ�����Ļָ���Ӧ������֮ǰ�İ汾�����������͵�Զ��վ��';
+            ? '这篇文章应用术语后已经产生了新的译文。\n\n继续撤销会恢复到应用术语之前的版本，并覆盖应用后的译文和修改；如果确认这次术语应用不适用于本篇，请点击“确定”继续。\n\n是否继续？'
+            : '撤销这一篇的术语应用？\n\n会把这篇英文译文恢复到应用术语之前的版本，并重新推送到远程站。';
         if (!confirm(confirmMessage)) return;
-        $btn.prop('disabled', true).text('�����С�');
+        $btn.prop('disabled', true).text('撤销中…');
         $.post(ajaxurl, {
             action: 'lisun_glossary_apply_undo',
             batch_id: batchId,
@@ -1802,17 +1802,17 @@ jQuery(function ($) {
             _nonce: nonce
         }, function (res) {
             if (!res.success) {
-                $btn.prop('disabled', false).text('������ƪ');
-                alert(res.data.message || '����ʧ��');
+                $btn.prop('disabled', false).text('撤销此篇');
+                alert(res.data.message || '撤销失败');
                 return;
             }
-            $btn.replaceWith('<span class="lisun-impact-single" style="font-size:11px;color:#888;">�ѳ���������ˢ�¡�</span>');
+            $btn.replaceWith('<span class="lisun-impact-single" style="font-size:11px;color:#888;">已撤销，正在刷新…</span>');
             if (typeof refreshHistory === 'function') refreshHistory();
             refreshImpactPreview();
             loadPage(currentPage);
         }).fail(function () {
-            $btn.prop('disabled', false).text('������ƪ');
-            alert('��������ʧ��');
+            $btn.prop('disabled', false).text('撤销此篇');
+            alert('撤销请求失败');
         });
     });
 
@@ -1840,7 +1840,7 @@ jQuery(function ($) {
         $article.find('.lisun-impact-tab').removeClass('is-active');
         $btn.addClass('is-active');
         $article.find('.lisun-impact-context-panel').hide();
-        $box.show().html('<span style="color:#646970;">���ڶ�ȡӦ�ü�¼��</span>');
+        $box.show().html('<span style="color:#646970;">正在读取应用记录…</span>');
         $.post(ajaxurl, {
             action: 'lisun_glossary_apply_post_history',
             term_id: activeImpact.term.term_id,
@@ -1850,10 +1850,10 @@ jQuery(function ($) {
             if (res.success) {
                 $box.html(escPostHistory(res.data.history || []));
             } else {
-                $box.html('<span style="color:#b32d2e;">' + escHtml((res.data && res.data.message) || '��ȡʧ��') + '</span>');
+                $box.html('<span style="color:#b32d2e;">' + escHtml((res.data && res.data.message) || '读取失败') + '</span>');
             }
         }).fail(function () {
-            $box.html('<span style="color:#b32d2e;">Ӧ�ü�¼����ʧ��</span>');
+            $box.html('<span style="color:#b32d2e;">应用记录请求失败</span>');
         });
     });
 
@@ -1869,10 +1869,10 @@ jQuery(function ($) {
         if (!activeImpact) return;
         var selected = Object.keys(selectedPostIds).map(function (id) { return parseInt(id, 10) || 0; }).filter(function (id) { return id > 0; });
         var msg = selected.length
-            ? 'ȷ��ֻӦ��ѡ�е� ' + selected.length + ' ƪ���£�����Ӣ�︱�����º�ͬ�����͵�Զ��Ӣ��վ��'
-            : 'ȷ�ϸ�����Щ��ʷ���ģ�����Ӣ�︱�����º�ͬ�����͵�Զ��Ӣ��վ��';
+            ? '确认只应用选中的 ' + selected.length + ' 篇文章？本地英语副本更新后将同步推送到远程英文站。'
+            : '确认更新这些历史译文？本地英语副本更新后将同步推送到远程英文站。';
         if (!confirm(msg)) return;
-        var $btn = $(this).prop('disabled', true).text('������ӡ�');
+        var $btn = $(this).prop('disabled', true).text('正在入队…');
         activeApplyButton = $btn;
         setImpactModalLocked(true);
         var payload = {action:'lisun_glossary_apply_start', term_id:activeImpact.term.term_id, term_revision:activeImpact.term_revision, _nonce:nonce};
@@ -1881,12 +1881,12 @@ jQuery(function ($) {
             if (!res.success) {
                 setImpactModalLocked(false);
                 refreshApplyButtonLabel();
-                alert(res.data.message || '��������ʧ��');
+                alert(res.data.message || '创建批次失败');
                 return;
             }
-            // ��ӳɹ�����չ�ѡ��������һ�������ѡ ID �ٴ��ύ��
+            // 入队成功后清空勾选，避免下一轮误把已选 ID 再次提交。
             selectedPostIds = {};
-            $btn.text('�����С�');
+            $btn.text('处理中…');
             activeBatchId = res.data.batch_id;
             $('#lisun-glossary-batch-status').text(res.data.message);
             refreshHistory();
@@ -1894,26 +1894,26 @@ jQuery(function ($) {
         }).fail(function () {
             setImpactModalLocked(false);
             refreshApplyButtonLabel();
-            alert('��������ʧ��');
+            alert('创建批次失败');
         });
     });
 
-    // ��Ӧ��״̬�µĸ߷����˹���ˢ������ȷ�ϣ���Ҫ������̶����֣�
-    // ��ֹ����ֱ�Ӱ��������������ٴμ�����С�
+    // 已应用状态下的高风险人工重刷：两次确认，并要求输入固定文字，
+    // 防止误点后直接把所有命中文章再次加入队列。
     $('#lisun-glossary-manual-unlock').on('click', function () {
         if (!activeImpact || !activeImpact.term || !activeImpact.application_state
             || activeImpact.application_state.status !== 'applied') return;
         var count = parseInt(activeImpact.application_state.applied_articles || 0, 10) || 0;
-        var termLabel = (activeImpact.term.zh || '') + ' �� ' + (activeImpact.term.en || '');
-        if (!window.confirm('ȷ��Ҫ�˹��������' + termLabel + '����\n\n�⽫���´�����ǰ��Ӧ�õ� ' + count + ' ƪ���£������͵�Զ��Ӣ��վ����ʷ��¼����ɾ����')) return;
-        var phrase = window.prompt('Ϊ����������������룺����������Ӧ��');
-        if (phrase !== '����������Ӧ��') {
-            if (phrase !== null) window.alert('ȷ�����ֲ���ȷ��δִ���˹�������');
+        var termLabel = (activeImpact.term.zh || '') + ' → ' + (activeImpact.term.en || '');
+        if (!window.confirm('确认要人工解锁术语“' + termLabel + '”吗？\n\n这将重新处理当前已应用的 ' + count + ' 篇文章，并推送到远程英文站。历史记录不会删除。')) return;
+        var phrase = window.prompt('为避免误操作，请输入：解锁并重新应用');
+        if (phrase !== '解锁并重新应用') {
+            if (phrase !== null) window.alert('确认文字不正确，未执行人工解锁。');
             return;
         }
-        if (!window.confirm('���ȷ�ϣ���������Ӧ�á�' + termLabel + '����ȫ����ǰ�������£�')) return;
+        if (!window.confirm('最后确认：现在重新应用“' + termLabel + '”的全部当前命中文章？')) return;
 
-        var $btn = $(this).prop('disabled', true).text('���ڽ�����');
+        var $btn = $(this).prop('disabled', true).text('正在解锁…');
         setImpactModalLocked(true);
         $.post(ajaxurl, {
             action: 'lisun_glossary_manual_unlock',
@@ -1925,40 +1925,40 @@ jQuery(function ($) {
         }, function (res) {
             if (!res.success) {
                 setImpactModalLocked(false);
-                $btn.prop('disabled', false).text('�˹�����������Ӧ��');
-                window.alert((res.data && res.data.message) || '�˹�����ʧ��');
+                $btn.prop('disabled', false).text('人工解锁并重新应用');
+                window.alert((res.data && res.data.message) || '人工解锁失败');
                 return;
             }
             setImpactModalLocked(false);
-            $btn.text('�˹��ѽ���');
-            $('#lisun-glossary-batch-status').text(res.data.message || '�˹������ɹ��������ȷ��Ӧ��');
+            $btn.text('人工已解锁');
+            $('#lisun-glossary-batch-status').text(res.data.message || '人工解锁成功，请继续确认应用');
             refreshHistory();
             refreshImpactPreview();
         }).fail(function () {
             setImpactModalLocked(false);
-            $btn.prop('disabled', false).text('�˹�����������Ӧ��');
-            window.alert('�˹���������ʧ��');
+            $btn.prop('disabled', false).text('人工解锁并重新应用');
+            window.alert('人工解锁请求失败');
         });
     });
 
     $('#lisun-glossary-apply-retry').on('click', function () {
         if (!activeBatchId) return;
-        var $btn = $(this).prop('disabled', true).text('�����С�');
+        var $btn = $(this).prop('disabled', true).text('重试中…');
         setImpactModalLocked(true);
         $.post(ajaxurl, {action:'lisun_glossary_apply_retry', batch_id:activeBatchId, _nonce:nonce}, function(res) {
             if (!res.success) {
                 setImpactModalLocked(false);
-                $btn.prop('disabled', false).text('����ʧ��');
-                alert(res.data.message || '����ʧ��');
+                $btn.prop('disabled', false).text('重试失败');
+                alert(res.data.message || '重试失败');
                 return;
             }
-            $btn.prop('disabled', false).text('����ʧ��');
+            $btn.prop('disabled', false).text('重试失败');
             $('#lisun-glossary-batch-status').text(res.data.message);
             pollBatch();
         }).fail(function () {
             setImpactModalLocked(false);
-            $btn.prop('disabled', false).text('����ʧ��');
-            alert('��������ʧ��');
+            $btn.prop('disabled', false).text('重试失败');
+            alert('重试请求失败');
         });
     });
     $('#lisun-glossary-impact-close, #lisun-glossary-impact-close-footer').on('click', function () {
@@ -1968,95 +1968,94 @@ jQuery(function ($) {
         $('#lisun-glossary-impact-modal').hide();
     });
 
-    // ========== ���� / ��ȡ / Google Sheets ==========
+    // ========== 推送 / 拉取 / Google Sheets ==========
     $('#lisun-push-glossary-en').on('click', function () {
-        if (!confirm('<?php echo esc_js(__('ȷ������ǰ��������͵�Զ��վ�����滻Զ��վ��������⡣', 'lisun-manual')); ?>')) return;
+        if (!confirm('<?php echo esc_js(__('确定将当前术语库推送到远程站？将替换远程站现有术语库。', 'lisun-manual')); ?>')) return;
         var $btn = $(this);
-        $btn.prop('disabled', true).text('<?php echo esc_js(__('������...', 'lisun-manual')); ?>');
+        $btn.prop('disabled', true).text('<?php echo esc_js(__('推送中...', 'lisun-manual')); ?>');
 
         $.post(ajaxurl, {
             action: 'lisun_push_glossary_en',
             _nonce: nonce
         }, function (res) {
-            $btn.prop('disabled', false).text('<?php echo esc_js(__('���͵�Զ��վ', 'lisun-manual')); ?>');
+            $btn.prop('disabled', false).text('<?php echo esc_js(__('推送到远程站', 'lisun-manual')); ?>');
             if (res.success) {
                 alert(res.data.message);
             } else {
-                alert('<?php echo esc_js(__('����ʧ�ܣ�', 'lisun-manual')); ?>' + (res.data.message || ''));
+                alert('<?php echo esc_js(__('推送失败：', 'lisun-manual')); ?>' + (res.data.message || ''));
             }
         }).fail(function (jqXHR, textStatus) {
-            $btn.prop('disabled', false).text('<?php echo esc_js(__('���͵�Զ��վ', 'lisun-manual')); ?>');
-            alert('<?php echo esc_js(__('��������ʧ�ܣ�', 'lisun-manual')); ?>' + textStatus);
+            $btn.prop('disabled', false).text('<?php echo esc_js(__('推送到远程站', 'lisun-manual')); ?>');
+            alert('<?php echo esc_js(__('网络请求失败：', 'lisun-manual')); ?>' + textStatus);
         });
     });
 
     $('#lisun-pull-glossary-en').on('click', function () {
-        if (!confirm('<?php echo esc_js(__('����Զ��վ��ȡ������滻��ǰ����⣬ȷ����', 'lisun-manual')); ?>')) return;
+        if (!confirm('<?php echo esc_js(__('将从远程站拉取术语库替换当前术语库，确定？', 'lisun-manual')); ?>')) return;
         var $btn = $(this);
-        $btn.prop('disabled', true).text('<?php echo esc_js(__('��ȡ��...', 'lisun-manual')); ?>');
+        $btn.prop('disabled', true).text('<?php echo esc_js(__('拉取中...', 'lisun-manual')); ?>');
 
         $.post(ajaxurl, {
             action: 'lisun_pull_glossary_en',
             _nonce: nonce
         }, function (res) {
-            $btn.prop('disabled', false).text('<?php echo esc_js(__('��Զ��վ��ȡ', 'lisun-manual')); ?>');
+            $btn.prop('disabled', false).text('<?php echo esc_js(__('从远程站拉取', 'lisun-manual')); ?>');
             if (res.success) {
                 alert(res.data.message);
                 location.reload();
             } else {
-                alert('<?php echo esc_js(__('��ȡʧ�ܣ�', 'lisun-manual')); ?>' + (res.data.message || ''));
+                alert('<?php echo esc_js(__('拉取失败：', 'lisun-manual')); ?>' + (res.data.message || ''));
             }
         }).fail(function (jqXHR, textStatus) {
-            $btn.prop('disabled', false).text('<?php echo esc_js(__('��Զ��վ��ȡ', 'lisun-manual')); ?>');
-            alert('<?php echo esc_js(__('��������ʧ�ܣ�', 'lisun-manual')); ?>' + textStatus);
+            $btn.prop('disabled', false).text('<?php echo esc_js(__('从远程站拉取', 'lisun-manual')); ?>');
+            alert('<?php echo esc_js(__('网络请求失败：', 'lisun-manual')); ?>' + textStatus);
         });
     });
 
     $('#lisun-sync-sheets').on('click', function () {
-        if (!confirm('<?php echo esc_js(__('���� Google Sheets ͬ������⣬������Ҫ��ʮ�롣ȷ����', 'lisun-manual')); ?>')) return;
+        if (!confirm('<?php echo esc_js(__('将从 Google Sheets 同步术语库，可能需要数十秒。确定？', 'lisun-manual')); ?>')) return;
         var $btn = $(this);
-        $btn.prop('disabled', true).text('<?php echo esc_js(__('ͬ����...', 'lisun-manual')); ?>');
+        $btn.prop('disabled', true).text('<?php echo esc_js(__('同步中...', 'lisun-manual')); ?>');
 
         $.post(ajaxurl, {
             action: 'lisun_sync_glossary_sheets',
             _nonce: nonce
         }, function (res) {
-            $btn.prop('disabled', false).text('<?php echo esc_js(__('�� Google Sheets ͬ��', 'lisun-manual')); ?>');
+            $btn.prop('disabled', false).text('<?php echo esc_js(__('从 Google Sheets 同步', 'lisun-manual')); ?>');
             if (res.success) {
-                alert(res.data.message + '\n\n<?php echo esc_js(__('�ű����', 'lisun-manual')); ?>:\n' + (res.data.log || ''));
+                alert(res.data.message + '\n\n<?php echo esc_js(__('脚本输出', 'lisun-manual')); ?>:\n' + (res.data.log || ''));
                 location.reload();
             } else {
-                alert('<?php echo esc_js(__('ͬ��ʧ��', 'lisun-manual')); ?>: ' + (res.data.message || '') + '\n\n<?php echo esc_js(__('���', 'lisun-manual')); ?>:\n' + (res.data.log || ''));
+                alert('<?php echo esc_js(__('同步失败', 'lisun-manual')); ?>: ' + (res.data.message || '') + '\n\n<?php echo esc_js(__('输出', 'lisun-manual')); ?>:\n' + (res.data.log || ''));
             }
         }).fail(function (jqXHR, textStatus) {
-            $btn.prop('disabled', false).text('<?php echo esc_js(__('�� Google Sheets ͬ��', 'lisun-manual')); ?>');
+            $btn.prop('disabled', false).text('<?php echo esc_js(__('从 Google Sheets 同步', 'lisun-manual')); ?>');
             var response = jqXHR.responseText || '';
             var detail = response ? '\n\n' + response.substring(0, 3000) : '';
-            alert('<?php echo esc_js(__('����ʧ��', 'lisun-manual')); ?>: HTTP ' + (jqXHR.status || 0) + ' / ' + textStatus + detail);
+            alert('<?php echo esc_js(__('请求失败', 'lisun-manual')); ?>: HTTP ' + (jqXHR.status || 0) + ' / ' + textStatus + detail);
         });
     });
 
     $('#lisun-check-deepl').on('click', function () {
         var $btn = $(this);
-        $btn.prop('disabled', true).text('�����...');
+        $btn.prop('disabled', true).text('检测中...');
 
         $.post(ajaxurl, {
             action: 'lisun_check_deepl_connection',
             _nonce: nonce
         }, function (res) {
-            $btn.prop('disabled', false).text('DeepL ���Ӽ�� / �޸�');
+            $btn.prop('disabled', false).text('DeepL 连接检测 / 修复');
             if (res.success) {
-                alert(res.data.message || '������');
+                alert(res.data.message || '检测完成');
                 location.reload();
             } else {
-                alert('���ʧ�ܣ�' + (res.data.message || 'δ֪����'));
+                alert('检测失败：' + (res.data.message || '未知错误'));
                 location.reload();
             }
         }).fail(function (jqXHR, textStatus) {
-            $btn.prop('disabled', false).text('DeepL ���Ӽ�� / �޸�');
-            alert('����ʧ�ܣ�HTTP ' + (jqXHR.status || 0) + ' / ' + textStatus);
+            $btn.prop('disabled', false).text('DeepL 连接检测 / 修复');
+            alert('请求失败：HTTP ' + (jqXHR.status || 0) + ' / ' + textStatus);
         });
     });
 });
 </script>
-
