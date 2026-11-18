@@ -1247,6 +1247,9 @@ jQuery(function ($) {
         var html = '<div style="border-left:3px solid #dcdcde;padding-left:10px;"><strong>应用记录</strong><ul style="margin:4px 0 0 18px;">';
         $.each(history, function (_, item) {
             var status = labels[item.status] || labels[item.batch_status] || item.status || '—';
+            if (item.undone) {
+                status = item.remote_sync_status === 'pending' ? '已撤销（远程待同步）' : '已撤销';
+            }
             var warningOnly = item.warning_only || (item.post_apply_audit && (item.post_apply_audit.term_count_warning || parseInt(item.post_apply_audit.visible_missing_count || 0, 10) > 0));
             if (warningOnly && status === '已完成') status += '（有警告）';
             var line = escHtml(item.time || item.updated_at || '') + ' · ' + escHtml(status) +
