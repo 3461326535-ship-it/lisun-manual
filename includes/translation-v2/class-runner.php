@@ -1177,6 +1177,13 @@ class Lisun_Manual_V2_Runner {
      * of the pipeline (planning, restore, materialize, push) is engine-neutral.
      */
     private static function make_translation_adapter($terms = null) {
+        // [修改时间：2026-11-18 +08:00] 实验开关默认关闭。只有测试环境显式开启时才走 LLM，
+        // 线上继续按原来的 DeepL / Google 路径运行。
+        if ((bool) get_option('lisun_llm_lab_enabled', false)
+            && class_exists('Lisun_Manual_V2_LLM_Lab_Adapter')) {
+            self::log('V2 engine=llm-lab model=' . (string) get_option('lisun_llm_lab_model', ''));
+            return new Lisun_Manual_V2_LLM_Lab_Adapter($terms);
+        }
         $provider = (string) get_option('lisun_llm_provider', 'deepseek');
         if ($provider === 'google' && class_exists('Lisun_Manual_V2_Google_Adapter')) {
             self::log('V2 engine=google endpoint='
