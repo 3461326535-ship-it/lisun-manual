@@ -247,12 +247,12 @@ class Lisun_Manual_V2_Runner {
                 (string) ($active_title_units[0]['source_text'] ?? '')
             );
 
-        // 2026-10-29��ͼƬ URL λ���ĵ��Ǽܻ��뵥ԪԴ���У����Ƚ������ı���©��
-        // ��ֻ����ͼƬ�����޸ģ���������û�䣬��Զ��վ�����յ��µ�ͼƬ���ӣ�
-        // �����һֱ��ʾ��ͼǰ�ľ�ͼ�����ﰴ˳��Ƚ� <img src>������ѻ�ͼ
-        // ���гɡ�����ʽ�仯�����������롣
-        // 2026-11-03������ֻ�Ƚ� source_skeleton���Ȱ���ʷ source_html ��Ԫ�Ż�
-        // �Ǽܣ��õ�������ʷԴ�ĺ��ٱȽϣ�����Ԫ�ڲ��Ļ�ͼ�Իᱻ©����
+        // 2026-10-29：图片 URL 位于文档骨架或翻译单元源码中，仅比较语义文本会漏掉
+        // “只换了图片”的修改：正文文字没变，但远程站必须收到新的图片链接，
+        // 否则会一直显示换图前的旧图。这里按顺序比较 <img src>，避免把换图
+        // 误判成“仅格式变化”而跳过重译。
+        // 2026-11-03：不能只比较 source_skeleton；先把历史 source_html 单元放回
+        // 骨架，得到完整历史源文后再比较，否则单元内部的换图仍会被漏掉。
         $active_source_html = self::rebuild_active_source_html($active);
         if ($body_matches && $title_matches
             && self::image_src_signature((string) $content)
@@ -340,7 +340,7 @@ class Lisun_Manual_V2_Runner {
         return $urls;
     }
 
-    /** 2026-11-03���Ƚ�ý��ǰ������ʷԴ�ĵ�Ԫ���²�ش洢�� skeleton�� */
+    /** 2026-11-03：比较媒体前，把历史源文单元重新插回存储的 skeleton。 */
     private static function rebuild_active_source_html($active) {
         $html = (string) ($active['revision']['source_skeleton'] ?? '');
         foreach ((array) ($active['units'] ?? []) as $unit) {
@@ -368,7 +368,7 @@ class Lisun_Manual_V2_Runner {
      */
     public static function apply_glossary_only($post_id, $content, $title, $glossary) {
         $active = Lisun_Manual_V2_Repository::get_active_snapshot($post_id);
-        if (!$active) return new WP_Error('v2_no_revision', 'û���ҵ� V2 ����汾��������������һ��');
+        if (!$active) return new WP_Error('v2_no_revision', '没有找到 V2 翻译版本，请先完整翻译一次');
 
         $source_check = self::compare_source_to_active_revision($post_id, $content, $title, $active);
         $source_hash = (string) ($source_check['current_hash'] ?? hash(
@@ -489,7 +489,7 @@ class Lisun_Manual_V2_Runner {
         $public_content = Lisun_Manual_Translate::merge_figure_captions_in_html($public_content);
         $integrity = self::validate_visible_translation((string) $content, (string) $public_content);
         if (is_wp_error($integrity)) return $integrity;
-        if (!$title_unit) return new WP_Error('v2_title_missing', 'V2 ���ⷭ�뵥Ԫȱʧ');
+        if (!$title_unit) return new WP_Error('v2_title_missing', 'V2 标题翻译单元缺失');
 
         $glossary_by_id = [];
         foreach ((array) $glossary as $term) {
@@ -511,7 +511,7 @@ class Lisun_Manual_V2_Runner {
             if (!empty($prepared_title['occurrences'])) {
                 return new WP_Error(
                     'v2_title_slots_missing',
-                    '��ǰ V2 �汾�ı���û�������λ������ִ��һ���������루ֻ�����ɱ����λ��'
+                    '当前 V2 版本的标题没有术语槽位，请先执行一次增量重译（只需生成标题槽位）'
                 );
             }
         }
@@ -575,13 +575,13 @@ class Lisun_Manual_V2_Runner {
 
     public static function source_change_message($reason) {
         $messages = [
-            'title_changed' => 'Դ��ָ�Ʋ�һ�£������ѱ仯���������·��룻Ӧ������������Զ�����',
-            'body_changed' => 'Դ��ָ�Ʋ�һ�£��������ݻ�ṹ�ѱ仯���������·��룻Ӧ������������Զ�����',
-            'title_and_body_changed' => 'Դ��ָ�Ʋ�һ�£���������Ķ��ѱ仯���������·��룻Ӧ������������Զ�����',
-            'body_parse_failed' => 'Դ��ָ�Ʋ�һ�£���ǰ���� HTML �޷������뵥Ԫ�������������·���',
-            'images_changed' => 'Դ���е�ͼƬ�Ѹ������������·����԰���ͼƬͬ����Զ��վ',
+            'title_changed' => '源文指纹不一致：标题已变化，请先重新翻译；应用术语表不会自动重译',
+            'body_changed' => '源文指纹不一致：正文内容或结构已变化，请先重新翻译；应用术语表不会自动重译',
+            'title_and_body_changed' => '源文指纹不一致：标题和正文都已变化，请先重新翻译；应用术语表不会自动重译',
+            'body_parse_failed' => '源文指纹不一致：当前正文 HTML 无法按翻译单元解析，请先重新翻译',
+            'images_changed' => '源文中的图片已更换，请先重新翻译以把新图片同步到远程站',
         ];
-        return $messages[$reason] ?? 'Դ��ָ�Ʋ�һ�£��޷�ȷ�ϵ�ǰԴ���뷭��汾��Ӧ���������·���';
+        return $messages[$reason] ?? '源文指纹不一致：无法确认当前源文与翻译版本对应，请先重新翻译';
     }
 
     /**
@@ -619,14 +619,14 @@ class Lisun_Manual_V2_Runner {
                 $marker_count = substr_count($template, $marker);
                 if ($marker_count === 1) continue;
                 if ($marker_count > 1) {
-                    $unresolved[] = self::slot_issue($unit, $occurrence, '�����λ�ظ�');
+                    $unresolved[] = self::slot_issue($unit, $occurrence, '术语槽位重复');
                     $unresolved_unit_keys[] = (string) ($unit['unit_key'] ?? '');
                     continue;
                 }
 
                 $old_text = (string) ($old_by_id[$id]['translated_text'] ?? '');
                 if ($old_text === '') {
-                    $unresolved[] = self::slot_issue($unit, $occurrence, 'ȱ����ʷ����');
+                    $unresolved[] = self::slot_issue($unit, $occurrence, '缺少历史译文');
                     $unresolved_unit_keys[] = (string) ($unit['unit_key'] ?? '');
                     continue;
                 }
@@ -656,7 +656,7 @@ class Lisun_Manual_V2_Runner {
                     $unresolved[] = self::slot_issue(
                         $unit,
                         $occurrence,
-                        $matches === 0 ? '�Ҳ���Ψһ����ʷ����' : '��ʷ���ĳ��ֶ�Σ��޷���ȫ��λ'
+                        $matches === 0 ? '找不到唯一的历史译文' : '历史译文出现多次，无法安全定位'
                     );
                     $unresolved_unit_keys[] = (string) ($unit['unit_key'] ?? '');
                     continue;
@@ -669,11 +669,11 @@ class Lisun_Manual_V2_Runner {
         unset($unit);
 
         if (!empty($unresolved)) {
-            $detail = implode('��', array_slice($unresolved, 0, 5));
-            if (count($unresolved) > 5) $detail .= '���Լ����� ' . (count($unresolved) - 5) . ' ��';
+            $detail = implode('；', array_slice($unresolved, 0, 5));
+            if (count($unresolved) > 5) $detail .= '；以及其他 ' . (count($unresolved) - 5) . ' 处';
             return new WP_Error(
                 'v2_glossary_slot_mismatch',
-                '����Ӧ��δ��ɣ����� ' . count($unresolved) . ' ���޷�Ψһ��λ�������λ��' . $detail . '����δ���������',
+                '术语应用未完成：发现 ' . count($unresolved) . ' 个无法唯一定位的术语槽位（' . $detail . '），未保存和推送',
                 ['unit_keys' => array_values(array_unique(array_filter($unresolved_unit_keys)))]
             );
         }
@@ -702,7 +702,7 @@ class Lisun_Manual_V2_Runner {
         return 'unit=' . (string) ($unit['unit_key'] ?? '')
             . ', source=' . (string) ($occurrence['source_text'] ?? '')
             . ', occurrence=' . (string) ($occurrence['occurrence_id'] ?? '')
-            . '��' . (string) $reason;
+            . '：' . (string) $reason;
     }
 
     /** Refresh English values while retaining every historical occurrence identity. */
@@ -806,12 +806,12 @@ class Lisun_Manual_V2_Runner {
     }
 
     /**
-     * [�޸�ʱ�䣺2026-11-16 15:40:00 +08:00]
-     * �ж�һ�����뵥Ԫ�Ƿ�������Ӣ�ģ�����û�к��֣���
+     * [修改时间：2026-11-16 15:40:00 +08:00]
+     * 判断一个翻译单元是否本来就是英文（整段没有汉字）。
      *
-     * ֻ�ڸ����Ŷ�ʱ���� true��ȥ�� HTML ��ǩ�󲻺��κκ��֡����ı���
-     * ȫ���ַ�����������һ������ĸ���ϵ�Ӣ�ĵ��ʡ����൥Ԫ����Ҫ���룬
-     * ֱ������Դ�ģ���֤������д�õ�Ӣ��һ���ַ��������Ķ���
+     * 只在高置信度时返回 true：去掉 HTML 标签后不含任何汉字、中文标点或
+     * 全角字符，且至少有一个两字母以上的英文单词。这类单元不需要翻译，
+     * 直接沿用源文，保证本来就写好的英文一个字符都不被改动。
      */
     private static function is_already_english_unit($unit) {
         $text = html_entity_decode(
@@ -824,13 +824,13 @@ class Lisun_Manual_V2_Runner {
         if (preg_match('/[\x{3000}-\x{303f}\x{3400}-\x{4dbf}\x{4e00}-\x{9fff}\x{f900}-\x{faff}\x{ff00}-\x{ffef}]/u', $text)) {
             return false;
         }
-        // ����Ҫ��һ��������Ӣ�ĵ��ʣ������ "1.0"��"��4��" ���ി���ŵ�Ԫ����Ӣ�ġ�
+        // 至少要有一个真正的英文单词，避免把 "1.0"、"≤4Ω" 这类纯符号单元当成英文。
         return (bool) preg_match('/[A-Za-z]{2,}/', $text);
     }
 
     public static function translate_document($post_id, $content, $title, $force = false, $force_unit_keys = []) {
         Lisun_Manual_V2_Schema::maybe_upgrade();
-        self::progress($post_id, 'extracting', 8, '������ȡ���뵥Ԫ��');
+        self::progress($post_id, 'extracting', 8, '正在提取翻译单元…');
         $content_document = Lisun_Manual_V2_Unit_Extractor::extract(
             (string) $content,
             'content',
@@ -838,7 +838,7 @@ class Lisun_Manual_V2_Runner {
                 $ratio = $total > 0 ? ($processed / $total) : 1;
                 $progress = 8 + (int) floor($ratio * 8);
                 self::progress($post_id, 'extracting', min(16, $progress),
-                    '������ȡ���뵥Ԫ����ɨ�� ' . $processed . '/' . $total . ' ���ĵ�Ƭ��');
+                    '正在提取翻译单元…已扫描 ' . $processed . '/' . $total . ' 个文档片段');
             }
         );
         if (is_wp_error($content_document)) return $content_document;
@@ -857,12 +857,12 @@ class Lisun_Manual_V2_Runner {
         }
         $current_terms = Lisun_Manual_Glossary::is_enabled() ? Lisun_Manual_Glossary::terms_for_post($post_id) : [];
         if (Lisun_Manual_Glossary::is_enabled()) {
-            // �������η���ʹ�á�����ʱѡ�����ﻯ�� $current_terms������һ�κ������
-            // �´η��������µ���ʱѡ������䵽��ƪĬ�����á�
+            // “仅本次翻译使用”的临时选择已物化到 $current_terms，消费一次后清除，
+            // 下次翻译若无新的临时选择则回落到本篇默认配置。
             Lisun_Manual_Glossary::clear_post_term_override($post_id);
         }
         $units = array_merge($content_document['units'], [$title_unit]);
-        self::progress($post_id, 'planning', 18, '����ȡ ' . count($units) . ' �����뵥Ԫ�����ڷ����ɸ������ġ�', [
+        self::progress($post_id, 'planning', 18, '已提取 ' . count($units) . ' 个翻译单元，正在分析可复用译文…', [
             'total_units' => count($units),
         ]);
         $plan = Lisun_Manual_V2_Planner::plan(
@@ -879,23 +879,23 @@ class Lisun_Manual_V2_Runner {
             . ' units=' . count($units)
             . ' pending=' . count($pending)
             . ' reused=' . $reuse_count
-            // [�޸�ʱ�䣺2026-11-05 11:10:48 +08:00] ��¼��������ȫȱʧ��ǿ������ĵ�Ԫ�����ڶ��� trace��
+            // [修改时间：2026-11-05 11:10:48 +08:00] 记录因术语完全缺失而强制重译的单元，便于对照 trace。
             . ' recovery=' . count((array) ($plan['recovery_unit_keys'] ?? []))
             . ' recovery_keys=' . wp_json_encode((array) ($plan['recovery_unit_keys'] ?? []))
             . ' force=' . ($force ? 'yes' : 'no'));
 
         $adapter = self::make_translation_adapter($current_terms);
 
-        // [�޸�ʱ�䣺2026-11-16 16:55:00 +08:00]
-        // ��Ӧ bug������˵�����ﱾ������Ӣ�ĵ����ݣ�����Ӣ��ʱ��Ҫ�Ķ�����
-        // ˵��������Щ��Ԫ���ζ���Ӣ�ģ����� EMC ��׼�� "Electromagnetic
-        // compatibility (EMC) �C Part 4-3��"�������б� "100g, 200g, ��"����
-        // ��Щ��������һ�η���ֻ�ᱻ��д�����¶Ͼ䣬û���κ����档
-        // ����ֻ����������Ԫ�������֡���Ƭ�Σ�ֱ�Ӱ�Դ�Ļ�ԭ����֤һ���ַ����䡣
+        // [修改时间：2026-11-16 16:55:00 +08:00]
+        // 对应 bug「中文说明书里本来就是英文的内容，翻成英文时不要改动」。
+        // 说明书里有些单元整段都是英文（例如 EMC 标准名 "Electromagnetic
+        // compatibility (EMC) – Part 4-3…"、重量列表 "100g, 200g, …"），
+        // 这些内容再送一次翻译只会被改写或重新断句，没有任何收益。
+        // 这里只跳过“整单元不含汉字”的片段，直接按源文还原，保证一个字符不变。
         //
-        // ע�⣺���Ķ�**���漰**�������� �� Integrating Sph��res���Ǹ� bug��
-        // �������Ƿ������������Ĵ�����Ϊ����� PR ˵�������Ϊ won't fix����
-        // ����಻����ʾ�����
+        // 注意：本改动**不涉及**「积分球 → Integrating Sphères」那个 bug。
+        // 该问题是翻译引擎自身的词形行为（详见 PR 说明，标记为 won't fix），
+        // 插件侧不做逐词纠正。
         $english_only = [];
         $pending_all = $pending;
         $pending = [];
@@ -921,7 +921,7 @@ class Lisun_Manual_V2_Runner {
         if (!empty($pending)) {
             $total_pending = count($pending);
             self::progress($post_id, 'translating', 25,
-                '���ڷ��� ' . $total_pending . ' �������뵥Ԫ��', [
+                '正在翻译 ' . $total_pending . ' 个待翻译单元…', [
                     'completed_units' => 0,
                     'total_units' => $total_pending,
                 ]);
@@ -929,7 +929,7 @@ class Lisun_Manual_V2_Runner {
                 $ratio = $total > 0 ? ($completed / $total) : 1;
                 $progress = 25 + (int) floor($ratio * 50);
                 self::progress($post_id, 'translating', min(75, $progress),
-                    '���ڷ��뷭�뵥Ԫ������� ' . $completed . '/' . $total . ' ����', [
+                    '正在翻译翻译单元：已完成 ' . $completed . '/' . $total . ' 个…', [
                         'completed_units' => $completed,
                         'total_units' => $total,
                         'completed_batches' => $completed_batches,
@@ -939,7 +939,7 @@ class Lisun_Manual_V2_Runner {
             if (is_wp_error($translated)) return $translated;
         } else {
             $translated = [];
-            self::progress($post_id, 'translating', 75, '�����뵥Ԫ��ȫ�����ã������������ġ�', [
+            self::progress($post_id, 'translating', 75, '待翻译单元已全部复用，正在整理译文…', [
                 'completed_units' => 0,
                 'total_units' => 0,
             ]);
@@ -949,7 +949,7 @@ class Lisun_Manual_V2_Runner {
             $key = $prepared_unit['unit']['unit_key'];
             $result = $translated[$key] ?? $english_only[$key] ?? null;
             if ($result === null) {
-                return new WP_Error('v2_missing_unit', 'V2 ������ȱ��������Ԫ');
+                return new WP_Error('v2_missing_unit', 'V2 翻译结果缺少完整单元');
             }
             $unit = $prepared_unit['unit'];
             $unit['target_template'] = $result['target_template'];
@@ -1010,7 +1010,7 @@ class Lisun_Manual_V2_Runner {
         $title_units = array_values(array_filter($ordered, function ($unit) {
             return $unit['field'] === 'title';
         }));
-        self::progress($post_id, 'rendering', 80, '������װ���Ĳ���������ԡ�', [
+        self::progress($post_id, 'rendering', 80, '正在组装译文并检查完整性…', [
             'total_units' => count($ordered),
         ]);
         $public_content = Lisun_Manual_V2_Materializer::materialize_document(
@@ -1018,9 +1018,9 @@ class Lisun_Manual_V2_Runner {
             Lisun_Manual_V2_Materializer::MODE_SNAPSHOT
         );
         if (is_wp_error($public_content)) return $public_content;
-        // 2026-11-03��10 �� 29 �յĵ�Ԫ��ý��ͬ�����������������ٶ�������װ���
-        // �����ĵ���һ��ȷ����У���ͬ����������ʹͼƬλ�� skeleton������ʷ
-        // target_template û�н��� Planner �ĸ��÷�֧��Ҳ���ܰѾ�ͼ�ƻ�Զ��վ��
+        // 2026-11-03：10 月 29 日的单元级媒体同步继续保留；这里再对最终组装后的
+        // 完整文档做一次确定性校验和同步。这样即使图片位于 skeleton，或历史
+        // target_template 没有进入 Planner 的复用分支，也不能把旧图推回远程站。
         $public_content = self::sync_document_image_markup((string) $content, (string) $public_content);
         if (is_wp_error($public_content)) return $public_content;
         $public_content = Lisun_Manual_Translate::repair_deepl_structural_boundaries(
@@ -1030,7 +1030,7 @@ class Lisun_Manual_V2_Runner {
         $public_content = Lisun_Manual_Translate::merge_figure_captions_in_html($public_content);
         $integrity = self::validate_visible_translation((string) $content, (string) $public_content);
         if (is_wp_error($integrity)) return $integrity;
-        if (empty($title_units)) return new WP_Error('v2_title_missing', 'V2 ���ⷭ�뵥Ԫȱʧ');
+        if (empty($title_units)) return new WP_Error('v2_title_missing', 'V2 标题翻译单元缺失');
 
         $title_occurrences = array_values(array_filter($all_occurrences, function ($occurrence) use ($title_units) {
             return $occurrence['unit_key'] === $title_units[0]['unit_key'];
@@ -1052,7 +1052,7 @@ class Lisun_Manual_V2_Runner {
             (int) get_option('lisun_glossary_revision', 0)
         );
         if (is_wp_error($revision)) return $revision;
-        self::progress($post_id, 'saving', 86, '���뵥Ԫ�ѱ��棬����׼��������', [
+        self::progress($post_id, 'saving', 86, '翻译单元已保存，正在准备发布…', [
             'total_units' => count($ordered),
         ]);
         $stats = $adapter->stats();
@@ -1085,9 +1085,9 @@ class Lisun_Manual_V2_Runner {
     }
 
     /**
-     * 2026-11-03���������ı���Я����ǰԴ�ĵ�ͼƬ��ǡ�
-     * ֻ��������ȫһ��ʱ��˳���滻��������һ��˵���ĵ��ṹ�޷�Ψһ��Ӧ��
-     * ��ʱ��ȷֹͣ�����ܲ²�ͼƬӦ�����λ�á�
+     * 2026-11-03：最终译文必须携带当前源文的图片标记。
+     * 只在数量完全一致时按顺序替换；数量不一致说明文档结构无法唯一对应，
+     * 此时明确停止，不能猜测图片应插入的位置。
      */
     private static function sync_document_image_markup($source_html, $translated_html) {
         preg_match_all('/<img\b[^>]*>/is', (string) $source_html, $source_matches);
@@ -1098,7 +1098,7 @@ class Lisun_Manual_V2_Runner {
         if (count($source_tags) !== count($target_tags)) {
             return new WP_Error(
                 'v2_image_count_mismatch',
-                'V2 ��������ͼƬ�����뵱ǰ����Դ�Ĳ�һ�£���ֹͣ���������',
+                'V2 最终译文图片数量与当前中文源文不一致，已停止保存和推送',
                 [
                     'source_images' => count($source_tags),
                     'translated_images' => count($target_tags),
@@ -1138,7 +1138,7 @@ class Lisun_Manual_V2_Runner {
 
     public static function materialize_active($post_id) {
         $active = Lisun_Manual_V2_Repository::get_active_snapshot($post_id);
-        if (!$active) return new WP_Error('v2_no_revision', 'û���ҵ� V2 ����汾');
+        if (!$active) return new WP_Error('v2_no_revision', '没有找到 V2 翻译版本');
         $glossary = Lisun_Manual_Glossary::is_enabled() ? Lisun_Manual_Glossary::get_all() : [];
         $content_units = [];
         $title_unit = null;
@@ -1157,7 +1157,7 @@ class Lisun_Manual_V2_Runner {
             (string) $content
         );
         $content = Lisun_Manual_Translate::merge_figure_captions_in_html($content);
-        if (!$title_unit) return new WP_Error('v2_title_missing', 'V2 ���ⷭ�뵥Ԫȱʧ');
+        if (!$title_unit) return new WP_Error('v2_title_missing', 'V2 标题翻译单元缺失');
         $title_occurrences = array_values(array_filter($active['occurrences'], function ($occurrence) use ($title_unit) {
             return $occurrence['unit_key'] === $title_unit['unit_key'];
         }));
@@ -1177,8 +1177,8 @@ class Lisun_Manual_V2_Runner {
      * of the pipeline (planning, restore, materialize, push) is engine-neutral.
      */
     private static function make_translation_adapter($terms = null) {
-        // [�޸�ʱ�䣺2026-11-18 +08:00] ʵ�鿪��Ĭ�Ϲرա�ֻ�в��Ի�����ʽ����ʱ���� LLM��
-        // ���ϼ�����ԭ���� DeepL / Google ·�����С�
+        // [修改时间：2026-11-18 +08:00] 实验开关默认关闭。只有测试环境显式开启时才走 LLM，
+        // 线上继续按原来的 DeepL / Google 路径运行。
         if ((bool) get_option('lisun_llm_lab_enabled', false)
             && class_exists('Lisun_Manual_V2_LLM_Lab_Adapter')) {
             self::log('V2 engine=llm-lab model=' . (string) get_option('lisun_llm_lab_model', ''));
@@ -1200,12 +1200,12 @@ class Lisun_Manual_V2_Runner {
         $source_chars = mb_strlen(preg_replace('/\s+/u', '', $source_text));
         $translated_chars = mb_strlen(preg_replace('/\s+/u', '', $translated_text));
         if ($source_chars > 0 && $translated_chars === 0) {
-            return new WP_Error('v2_empty_document', 'DeepL ���ص���ƪ�ɼ�����Ϊ�գ�δ���������');
+            return new WP_Error('v2_empty_document', 'DeepL 返回的整篇可见译文为空，未保存和推送');
         }
         if ($source_chars >= 20 && ($translated_chars / $source_chars) < 0.60) {
             return new WP_Error(
                 'v2_incomplete_document',
-                'DeepL ���ص���ƪ�ɼ���������ȱʧ�������ȵ��� 60%����δ���������'
+                'DeepL 返回的整篇可见译文严重缺失（完整度低于 60%），未保存和推送'
             );
         }
         return true;
@@ -1226,4 +1226,3 @@ class Lisun_Manual_V2_Runner {
         }
     }
 }
-
