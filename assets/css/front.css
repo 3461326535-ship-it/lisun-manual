@@ -898,6 +898,25 @@ body {
     overflow-wrap: anywhere !important;
 }
 
+/* [修改时间：2026-11-16 15:40:00 +08:00]
+   普通数据表（首列不是型号/编号，而是「项目、参数、说明」这类有内容的列）
+   不适合「首列固定 + 其余平均」：内容多的列会被平均分配压窄。
+   型号表仍然固定列宽，其余表交给浏览器按内容分配，并把宽度约束放开。 */
+.lisun-manual-content table.lisun-auto-column-table,
+.lisun-manual-content .table-scroll-container table.lisun-auto-column-table {
+    table-layout: auto !important;
+}
+
+.lisun-manual-content table.lisun-auto-column-table > tr > [data-lisun-column],
+.lisun-manual-content table.lisun-auto-column-table > * > tr > [data-lisun-column] {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    word-break: normal !important;
+}
+
 /* 含 colspan/rowspan 的旧复杂表格：固定逻辑列，避免浏览器按内容把
    合并标题前面的列压窄；不再套用首列优先规则。 */
 .lisun-manual-content table.lisun-complex-table,
