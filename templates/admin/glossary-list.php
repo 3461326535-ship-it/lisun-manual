@@ -1052,14 +1052,29 @@ jQuery(function ($) {
     function escContexts(item) {
         var contexts = item.contexts || [];
         if (!contexts.length) return '<div class="lisun-impact-empty">暂无可展示的命中上下文</div>';
+        // One paragraph may contain the same term more than once. The scanner
+        // returns one row per occurrence for accurate counts, but the UI
+        // should show that paragraph once instead of looking like duplicates.
+        var grouped = {};
+        $.each(contexts, function (_, hit) {
+            // unit_key/source_path identify the source paragraph. Context
+            // windows differ for each occurrence, so including their text in
+            // the key would fail to collapse two hits from the same paragraph.
+            var key = String(hit.unit_key || '') + '|' + String(hit.source_path || '');
+            if (!grouped[key]) grouped[key] = {hit: hit, count: 0};
+            grouped[key].count++;
+        });
+        var rows = Object.values(grouped);
         var html = '<div class="lisun-impact-panel lisun-impact-context-panel">';
-        $.each(contexts.slice(0, 100), function (_, hit) {
+        $.each(rows.slice(0, 100), function (_, row) {
+            var hit = row.hit;
             html += '<div class="lisun-impact-context">' +
-                '<div class="lisun-impact-context-path">' + escHtml((hit.unit_type || 'text') + ' · ' + (hit.source_path || '')) + '</div>' +
+                '<div class="lisun-impact-context-path">' + escHtml((hit.unit_type || 'text') + ' · ' + (hit.source_path || '')) +
+                (row.count > 1 ? ' · 本段命中 ' + row.count + ' 处' : '') + '</div>' +
                 '<div class="lisun-impact-context-text">' + escContextText(hit.context || '') + '</div>' +
                 '</div>';
         });
-        if (contexts.length > 100) html += '<div class="lisun-impact-empty">其余 ' + (contexts.length - 100) + ' 处未展开</div>';
+        if (rows.length > 100) html += '<div class="lisun-impact-empty">其余 ' + (rows.length - 100) + ' 个段落未展开</div>';
         return html + '</div>';
     }
 
@@ -1184,7 +1199,6 @@ jQuery(function ($) {
             var resolvedCount = parseInt(audit.resolved_count || 0, 10) || 0;
             var processCount = applied ? resolvedCount : unappliedCount;
             var processLabel = applied ? '已通过增量处理 ' : (incomplete ? '增量翻译后仍缺失 ' : '待增量处理 ');
-            var termAnomalyCount = parseInt(item.term_anomaly_units || 0, 10) || 0;
             var termWarningCount = parseInt(audit.term_count_warning_count || audit.visible_missing_count || 0, 10) || 0;
             var selectable = !applied;
             var singleButtonText = hardVisibleFailure ? '重新增量翻译' : '单篇应用';
@@ -1204,7 +1218,6 @@ jQuery(function ($) {
                         '<span class="lisun-impact-badge">命中 ' + hitCount + ' 处</span>' +
                         (hasVisibleAudit && stableAnchorCount < hitCount ? '<span class="lisun-impact-badge is-warning">稳定锚点 ' + stableAnchorCount + '/' + hitCount + ' 处</span>' : '') +
                         (hardVisibleFailure ? '<span class="lisun-impact-badge is-warning">目标译法未落实，需重新处理</span>' : (termWarningCount ? '<span class="lisun-impact-badge is-warning">术语数量提示：少 ' + termWarningCount + ' 处（仅供核对）</span>' : '')) +
-                        (termAnomalyCount ? '<span class="lisun-impact-badge is-warning">术语表异常 ' + termAnomalyCount + ' 个段落</span>' : '') +
                         (!applied && !hasVisibleAudit && appliedHitCount && unappliedCount ? '<span class="lisun-impact-badge is-applied">已应用 ' + appliedHitCount + ' 处</span>' : '') +
                         (processCount ? '<span class="lisun-impact-badge is-warning">' + processLabel + processCount + ' 处</span>' : '') +
                     '</span>' +
@@ -1216,7 +1229,6 @@ jQuery(function ($) {
                         '<button type="button" class="lisun-impact-tab lisun-application-history" data-panel="history" data-post-id="' + escAttr(item.post_id) + '">应用记录</button>' +
                     '</div>' +
                     ((localOnly || incomplete || hardVisibleFailure) && item.last_error ? '<div class="lisun-impact-panel" style="border-left:3px solid #d63638;color:#8a2424;">' + escHtml(item.last_error) + '</div>' : '') +
-                    (termAnomalyCount ? '<div class="lisun-impact-panel" style="border-left:3px solid #dba617;color:#754b12;">术语表检查发现 ' + termAnomalyCount + ' 个段落的英文目标术语数量与中文原文不一致，请打开英文译文人工核对。</div>' : '') +
                     escUnappliedMatches(item) +
                     '<div class="lisun-impact-panel lisun-impact-context-panel">' + escContexts(item).replace(/^<div class="lisun-impact-panel lisun-impact-context-panel">|<\/div>$/g, '') + '</div>' +
                     '<div class="lisun-application-history-box lisun-impact-panel" style="display:none;"></div>' +
