@@ -386,6 +386,19 @@ class Lisun_Manual_V2_Materializer {
         return substr($text, $after);
     }
 
+    /**
+     * 把每个句子（. ! ? 之后）的首字母补成大写，其余字符保持原样。
+     */
+    private static function capitalize_sentence_starts($text) {
+        return preg_replace_callback(
+            '/([.!?][“”"\'’）)]*\s+)([a-z])/u',
+            static function ($match) {
+                return $match[1] . strtoupper($match[2]);
+            },
+            (string) $text
+        );
+    }
+
     private static function word_start($text) {
         return preg_match('/^[A-Za-z0-9]/', (string) $text) === 1;
     }
@@ -413,9 +426,16 @@ class Lisun_Manual_V2_Materializer {
                 $depth = max(0, $depth - 1);
                 $started = false;
             } elseif ($depth > 0 && ($token['type'] ?? '') === 'text' && trim((string) $token['raw']) !== '') {
-                $context = $started ? 'body' : 'sentence_start';
-                $token['raw'] = Lisun_Manual_V2_Term_Matcher::apply_case($token['raw'], $context);
-                if (preg_match('/[A-Za-z]/', (string) $token['raw'])) $started = true;
+                $raw = (string) $token['raw'];
+                // 只在单元格内容确实以小写字母开头时补句首大写；
+                // 数字/符号开头的单位 mm、s 不应变成 Mm、S。
+                if (!$started) {
+                    if (preg_match('/^\s*[a-z]/u', $raw)) {
+                        $raw = Lisun_Manual_V2_Term_Matcher::apply_case($raw, 'sentence_start');
+                    }
+                    $started = true;
+                }
+                $token['raw'] = self::capitalize_sentence_starts($raw);
             }
         }
         unset($token);
