@@ -368,8 +368,25 @@ class Lisun_Manual_Glossary_Apply {
 
         // Run the actual rollback.
         $result = Lisun_Manual_Translate::undo_glossary_apply($post_id, $applied_revision_id);
+        $remote_warning = '';
         if (is_wp_error($result)) {
-            wp_send_json_error(['message' => $result->get_error_message()]);
+            $error_data = $result->get_error_data();
+            // The local revision and English copy are already restored before
+            // the remote push runs. A remote failure must not leave the UI
+            // offering the same undo again; persist the undo marker and return
+            // success-with-warning so the article becomes re-applicable.
+            if ($result->get_error_code() === 'push_failed'
+                && is_array($error_data) && !empty($error_data['restored'])) {
+                $remote_warning = $result->get_error_message();
+                $result = [
+                    'restored' => true,
+                    'previous_revision_id' => (int) ($error_data['previous_revision_id'] ?? 0),
+                    'applied_revision_id' => $applied_revision_id,
+                    'pushed' => false,
+                ];
+            } else {
+                wp_send_json_error(['message' => $result->get_error_message()]);
+            }
         }
 
         $undone_at = current_time('mysql');
@@ -380,6 +397,8 @@ class Lisun_Manual_Glossary_Apply {
             'batch_id' => $batch_id,
             'applied_revision_id' => $applied_revision_id,
             'restored_revision_id' => $restored_revision_id,
+            'remote_sync_status' => $remote_warning ? 'pending' : 'synced',
+            'remote_sync_error' => $remote_warning,
         ];
 
         // The UI may be showing an application from an older batch while the
@@ -510,7 +529,13 @@ class Lisun_Manual_Glossary_Apply {
         }
 
         wp_send_json_success([
-            'message' => '已撤销并恢复到应用前的译文，远程站已更新',
+            'message' => $remote_warning
+                ? '本地已撤销；远程英文站尚未同步，请重推撤销后的版本'
+                : '已撤销并恢复到应用前的译文，远程站已更新',
+            'warning' => $remote_warning,
+            'pushed' => !$remote_warning,
+            'local_status' => 'undone',
+            'remote_status' => $remote_warning ? 'pending' : 'synced',
             'previous_revision_id' => (int) ($result['previous_revision_id'] ?? 0),
         ]);
     }
@@ -2865,3 +2890,4 @@ class Lisun_Manual_Glossary_Apply {
         });
     }
 }
+
