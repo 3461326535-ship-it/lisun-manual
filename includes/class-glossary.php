@@ -171,7 +171,8 @@ class Lisun_Manual_Glossary {
         add_action('wp_ajax_lisun_check_deepl_connection', [__CLASS__, 'ajax_check_deepl_connection']);
         add_action('wp_ajax_lisun_retry_glossary_sync', [__CLASS__, 'ajax_retry_glossary_sync']);
         add_action('wp_ajax_lisun_get_glossary_page', [__CLASS__, 'ajax_get_page']);
-        add_action('init', [__CLASS__, 'purge_expired_trash']);
+        // 同上：勿在 init() 内以同优先级挂 init（WP_Hook 快照会跳过，永不触发），改为直接调用。
+        self::purge_expired_trash();
         add_action('wp_ajax_lisun_post_term_config', [__CLASS__, 'ajax_post_term_config']);
         add_action('wp_ajax_lisun_save_post_term_config', [__CLASS__, 'ajax_save_post_term_config']);
         add_action('wp_ajax_lisun_set_post_term_override', [__CLASS__, 'ajax_set_post_term_override']);
