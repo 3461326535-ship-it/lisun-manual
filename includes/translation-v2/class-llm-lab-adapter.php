@@ -1,21 +1,13 @@
 <?php
-/**
- * LLM-primary experiment adapter for Translation V2.
- *
- * This adapter is deliberately inert unless lisun_llm_lab_enabled is true.
- * It reuses V2 extraction, per-post terms, anchors and restore validation, and
- * never introduces a second glossary store.
- */
-
-if (!defined('ABSPATH')) {
-    exit;
-}
+/** LLM-primary adapter for the existing Translation V2 pipeline. */
+if (!defined('ABSPATH')) exit;
 
 class Lisun_Manual_V2_LLM_Lab_Adapter {
-
     private $terms = [];
     private $request_count = 0;
     private $characters = 0;
+    private $max_batch_units = 10;
+    private $max_batch_xml_chars = 14000;
 
     public function __construct($terms = null) {
         $this->terms = is_array($terms) ? array_values($terms) : [];
@@ -25,25 +17,14 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         $prepared_units = array_values((array) $prepared_units);
         $results = [];
         $total = count($prepared_units);
-
-        // One semantic unit per request for the first experiment. This makes
-        // truncation and accidental cross-unit merging observable and retryable.
-        foreach ($prepared_units as $index => $prepared) {
-            $translated_xml = $this->request_unit($prepared, $post_id, $index);
-            if (is_wp_error($translated_xml)) return $translated_xml;
-
-            $restored = Lisun_Manual_V2_Unit_Transport::restore($prepared, $translated_xml);
-            if (is_wp_error($restored)) {
-                return new WP_Error(
-                    'llm_lab_restore_failed',
-                    'LLM 返回内容未通过 V2 标签/术语锚点校验：' . $restored->get_error_message(),
-                    ['unit_key' => (string) ($prepared['unit']['unit_key'] ?? '')]
-                );
-            }
-            $results[(string) $prepared['unit']['unit_key']] = $restored;
-            if (is_callable($on_batch)) {
-                call_user_func($on_batch, $index + 1, $total, $index + 1, $total);
-            }
+        $batches = $this->make_batches($prepared_units);
+        $completed = 0;
+        foreach ($batches as $batch_index => $batch) {
+            $translated = $this->translate_batch_with_split($batch, $post_id, (string) $batch_index);
+            if (is_wp_error($translated)) return $translated;
+            $results = array_merge($results, $translated);
+            $completed += count($batch);
+            if (is_callable($on_batch)) call_user_func($on_batch, $completed, $total, $batch_index + 1, count($batches));
         }
         return $results;
     }
@@ -52,115 +33,112 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         return ['requests' => $this->request_count, 'characters' => $this->characters];
     }
 
-    private function request_unit($prepared, $post_id, $index) {
+    private function make_batches($prepared_units) {
+        $batches = []; $current = []; $chars = 0;
+        foreach ($prepared_units as $prepared) {
+            $size = mb_strlen((string) ($prepared['xml'] ?? ''));
+            if ($current && (count($current) >= $this->max_batch_units || $chars + $size > $this->max_batch_xml_chars)) {
+                $batches[] = $current; $current = []; $chars = 0;
+            }
+            $current[] = $prepared; $chars += $size;
+        }
+        if ($current) $batches[] = $current;
+        return $batches;
+    }
+
+    private function translate_batch_with_split($batch, $post_id, $batch_id) {
+        $translated = $this->request_batch($batch, $post_id, $batch_id);
+        if (!is_wp_error($translated)) return $translated;
+        if (count($batch) <= 1 || !in_array($translated->get_error_code(), [
+            'llm_lab_truncated', 'llm_lab_non_xml', 'llm_lab_batch_mismatch', 'llm_lab_restore_failed'
+        ], true)) return $translated;
+        $middle = (int) ceil(count($batch) / 2);
+        $left = $this->translate_batch_with_split(array_slice($batch, 0, $middle), $post_id, $batch_id . 'a');
+        if (is_wp_error($left)) return $left;
+        $right = $this->translate_batch_with_split(array_slice($batch, $middle), $post_id, $batch_id . 'b');
+        return is_wp_error($right) ? $right : array_merge($left, $right);
+    }
+
+    private function request_batch($batch, $post_id, $batch_id) {
         $config = $this->config();
-        if ($config['api_key'] === '') {
-            return new WP_Error('llm_lab_key_missing', 'LLM 实验 API Key 未配置');
+        if ($config['api_key'] === '') return new WP_Error('llm_lab_key_missing', 'LLM API Key 未配置');
+        if ($config['api_url'] === '' || $config['model'] === '') return new WP_Error('llm_lab_config_missing', 'LLM API 地址或模型未配置');
+        $xml = '<lisun-batch id="' . esc_attr((string) $post_id . '-' . $batch_id) . '">';
+        foreach ($batch as $prepared) {
+            $xml .= (string) ($prepared['xml'] ?? '');
+            $this->characters += mb_strlen((string) ($prepared['unit']['source_text'] ?? ''));
         }
-        if ($config['api_url'] === '' || $config['model'] === '') {
-            return new WP_Error('llm_lab_config_missing', 'LLM 实验 API 地址或模型未配置');
-        }
-
-        $xml = (string) ($prepared['xml'] ?? '');
-        $this->characters += mb_strlen((string) ($prepared['unit']['source_text'] ?? ''));
-        $body = [
-            'model' => $config['model'],
-            'temperature' => $config['temperature'],
-            'messages' => [
-                ['role' => 'system', 'content' => $this->system_prompt()],
-                ['role' => 'user', 'content' => "Translate this single unit. Return only XML.\n\n" . $xml],
-            ],
-        ];
+        $xml .= '</lisun-batch>';
+        $body = ['model' => $config['model'], 'temperature' => $config['temperature'], 'messages' => [
+            ['role' => 'system', 'content' => $this->system_prompt($batch)],
+            ['role' => 'user', 'content' => "Translate every unit in this batch. Return only the complete lisun-batch XML in the original order.\n\n" . $xml],
+        ]];
+        if ($config['provider'] === 'doubao') $body['thinking'] = ['type' => 'disabled'];
         if ($config['max_tokens'] > 0) $body['max_tokens'] = $config['max_tokens'];
-
         $this->request_count++;
-        $response = wp_remote_post($config['api_url'], [
-            'timeout' => $config['timeout'],
-            'headers' => [
-                'Authorization' => 'Bearer ' . $config['api_key'],
-                'Content-Type' => 'application/json',
-            ],
-            'body' => wp_json_encode($body, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
-        ]);
+        $response = wp_remote_post($config['api_url'], ['timeout' => $config['timeout'], 'headers' => [
+            'Authorization' => 'Bearer ' . $config['api_key'], 'Content-Type' => 'application/json'
+        ], 'body' => wp_json_encode($body, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE)]);
         if (is_wp_error($response)) return $response;
         $status = (int) wp_remote_retrieve_response_code($response);
         $data = json_decode((string) wp_remote_retrieve_body($response), true);
-        if ($status < 200 || $status >= 300) {
-            $message = (string) ($data['error']['message'] ?? ('HTTP ' . $status));
-            return new WP_Error('llm_lab_http_error', 'LLM 实验请求失败：' . $message);
-        }
-
-        $finish = (string) ($data['choices'][0]['finish_reason'] ?? '');
-        if ($finish === 'length') {
-            return new WP_Error('llm_lab_truncated', 'LLM 返回因长度限制被截断，当前单元未保存');
-        }
+        if ($status < 200 || $status >= 300) return new WP_Error('llm_lab_http_error', (string) ($data['error']['message'] ?? ('HTTP ' . $status)));
+        if ((string) ($data['choices'][0]['finish_reason'] ?? '') === 'length') return new WP_Error('llm_lab_truncated', 'LLM 输出被截断');
         $content = trim((string) ($data['choices'][0]['message']['content'] ?? ''));
-        $content = preg_replace('/^```(?:xml)?\s*|\s*```$/i', '', $content);
-        $content = trim((string) $content);
-        if ($content === '' || strpos($content, '<lisun-unit') === false) {
-            return new WP_Error('llm_lab_non_xml', 'LLM 没有返回预期的 lisun-unit XML，当前单元未保存');
-        }
-        return $content;
+        $content = trim((string) preg_replace('/^```(?:xml)?\s*|\s*```$/i', '', $content));
+        if ($content === '' || strpos($content, '<lisun-unit') === false) return new WP_Error('llm_lab_non_xml', 'LLM 没有返回预期 XML');
+        return $this->restore_batch($batch, $content);
     }
 
-    private function system_prompt() {
+    private function restore_batch($batch, $content) {
+        if (!class_exists('DOMDocument')) return new WP_Error('llm_lab_non_xml', 'PHP DOM/XML 扩展不可用');
+        $dom = new DOMDocument('1.0', 'UTF-8');
+        $previous = libxml_use_internal_errors(true);
+        $ok = $dom->loadXML($content, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
+        libxml_clear_errors(); libxml_use_internal_errors($previous);
+        if (!$ok) return new WP_Error('llm_lab_non_xml', 'LLM 返回了无效 XML');
+        $nodes = $dom->getElementsByTagName('lisun-unit');
+        if ($nodes->length !== count($batch)) return new WP_Error('llm_lab_batch_mismatch', 'LLM 返回的单元数量不一致');
+        $results = [];
+        foreach ($batch as $index => $prepared) {
+            $node = $nodes->item($index);
+            $expected = (string) ($prepared['unit']['unit_key'] ?? '');
+            if (!$node || $node->getAttribute('key') !== $expected) return new WP_Error('llm_lab_batch_mismatch', 'LLM 改变了单元顺序或 key');
+            $restored = Lisun_Manual_V2_Unit_Transport::restore($prepared, $dom->saveXML($node));
+            if (is_wp_error($restored)) return new WP_Error('llm_lab_restore_failed', 'LLM 输出未通过 V2 校验：' . $restored->get_error_message(), ['unit_key' => $expected]);
+            $results[$expected] = $restored;
+        }
+        return $results;
+    }
+
+    private function system_prompt($batch) {
         $rules = [
             'You translate Chinese technical product manuals into natural, precise US English.',
-            'Return only the supplied <lisun-unit> XML. Do not add Markdown, explanations, notes, alternatives, or JSON.',
-            'Preserve every element, id, attribute, placeholder, nesting relationship, and count exactly.',
+            'Return only the supplied <lisun-batch> XML. Do not add Markdown, explanations, notes, alternatives, or JSON.',
+            'Preserve every unit, element, key, id, placeholder, nesting relationship, order, and count exactly.',
             'Translate only human-readable Chinese text nodes. Keep existing English, model numbers, standards, units, URLs and code unchanged.',
             'Never leave Chinese in the output. Never merge, omit, duplicate, or invent content.',
-            'Text inside each <t> element is a terminology occurrence. Translate it using the glossary below and keep the <t> element around the translated words.',
+            'Text inside each <t> element is a terminology occurrence. Use the mandatory glossary and keep the <t> element and id.',
         ];
         $glossary = [];
-        foreach ($this->terms as $term) {
-            $zh = trim((string) ($term['zh'] ?? ''));
-            $en = trim((string) ($term['en'] ?? ''));
-            if ($zh !== '' && $en !== '') $glossary[] = $zh . ' => ' . $en;
+        foreach ($batch as $prepared) foreach ((array) ($prepared['occurrences'] ?? []) as $occurrence) {
+            $zh = trim((string) ($occurrence['source_text'] ?? ''));
+            $en = trim((string) ($occurrence['translated_text'] ?? ''));
+            if ($zh !== '' && $en !== '') $glossary[$zh . "\0" . $en] = $zh . ' => ' . $en;
         }
-        return implode("\n", $rules)
-            . (empty($glossary) ? '' : "\n\nMandatory glossary for this article:\n" . implode("\n", $glossary));
+        return implode("\n", $rules) . (empty($glossary) ? '' : "\n\nMandatory glossary for this batch:\n" . implode("\n", $glossary));
     }
 
     private function config() {
         $provider = (string) get_option('lisun_llm_lab_provider', 'deepseek');
-        $defaults = [
-            'deepseek' => 'https://api.deepseek.com/chat/completions',
-            'doubao' => 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
-            'openai' => 'https://api.openai.com/v1/chat/completions',
-            'openrouter' => 'https://openrouter.ai/api/v1/chat/completions',
-            'gemini' => 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-        ];
-        $default_models = [
-            'deepseek' => 'deepseek-chat',
-            'doubao' => (string) get_option('lisun_doubao_model', 'Doubao-Seed-2.1-pro'),
-            'openai' => 'gpt-4o',
-            'openrouter' => 'openrouter/auto',
-            'gemini' => 'gemini-3.6-flash',
-        ];
+        $urls = ['deepseek' => 'https://api.deepseek.com/chat/completions', 'doubao' => 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', 'openai' => 'https://api.openai.com/v1/chat/completions', 'openrouter' => 'https://openrouter.ai/api/v1/chat/completions', 'gemini' => 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'];
+        $models = ['deepseek' => 'deepseek-chat', 'doubao' => (string) get_option('lisun_doubao_model', 'Doubao-Seed-2.1-pro'), 'openai' => 'gpt-4o', 'openrouter' => 'openrouter/auto', 'gemini' => 'gemini-3.6-flash'];
         $api_url = trim((string) get_option('lisun_llm_lab_api_url', ''));
-        if ($api_url === '') $api_url = $defaults[$provider] ?? $defaults['deepseek'];
-        if ($provider === 'doubao') {
-            $endpoint = trim((string) get_option('lisun_doubao_endpoint', ''));
-            $api_url = $defaults['doubao'];
-        }
-        $api_key = class_exists('Lisun_Manual_Provider_Config')
-            ? Lisun_Manual_Provider_Config::api_key($provider)
-            : '';
-        // Lab-only compatibility for configurations created before the
-        // provider-specific credential layer existed.
-        if ($api_key === '') {
-            $api_key = trim((string) get_option('lisun_llm_lab_api_key', ''));
-        }
-        return [
-            'api_url' => $api_url,
-            'api_key' => $api_key,
-            'model' => $provider === 'doubao' && $endpoint !== ''
-                ? $endpoint
-                : trim((string) get_option('lisun_llm_lab_model', $default_models[$provider] ?? '')),
-            'temperature' => (float) get_option('lisun_llm_lab_temperature', 0),
-            'max_tokens' => max(0, (int) get_option('lisun_llm_lab_max_tokens', 8192)),
-            'timeout' => max(30, (int) get_option('lisun_llm_lab_timeout', 180)),
-        ];
+        if ($api_url === '') $api_url = $urls[$provider] ?? $urls['deepseek'];
+        $endpoint = '';
+        if ($provider === 'doubao') { $endpoint = trim((string) get_option('lisun_doubao_endpoint', '')); $api_url = $urls['doubao']; }
+        $api_key = class_exists('Lisun_Manual_Provider_Config') ? Lisun_Manual_Provider_Config::api_key($provider) : '';
+        if ($api_key === '') $api_key = trim((string) get_option('lisun_llm_lab_api_key', ''));
+        return ['provider' => $provider, 'api_url' => $api_url, 'api_key' => $api_key, 'model' => $provider === 'doubao' && $endpoint !== '' ? $endpoint : trim((string) get_option('lisun_llm_lab_model', $models[$provider] ?? '')), 'temperature' => (float) get_option('lisun_llm_lab_temperature', 0), 'max_tokens' => max(0, (int) get_option('lisun_llm_lab_max_tokens', 8192)), 'timeout' => max(30, (int) get_option('lisun_llm_lab_timeout', 180))];
     }
 }
