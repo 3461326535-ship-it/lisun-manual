@@ -13,6 +13,20 @@ require_once __DIR__ . '/class-table-layout.php';
 class Lisun_Manual_Sync {
 
     /**
+     * [修改时间：2026-11-19 +08:00] LLM 实验环境禁止任何远程写入。
+     * 测试站仍可在本地生成、保存和审阅译文，但不会改动正式英文站。
+     */
+    private static function llm_lab_remote_write_guard() {
+        if ((bool) get_option('lisun_llm_lab_enabled', false)) {
+            return new WP_Error(
+                'llm_lab_remote_write_blocked',
+                __('LLM 实验模式已阻止向远程站写入', 'lisun-manual')
+            );
+        }
+        return true;
+    }
+
+    /**
      * 编码远程 REST 请求正文，确保非法 UTF-8 不会让 json_encode 返回 false。
      * Requests 的 cURL 传输层只接受 array|string，不能把 false 作为 body 传入。
      */
@@ -183,6 +197,9 @@ class Lisun_Manual_Sync {
      * @return int|WP_Error 远程站页面 ID
      */
     public static function push_translation($zh_post_id, $en_title, $en_content, $en_slug, $en_seo = []) {
+        $lab_guard = self::llm_lab_remote_write_guard();
+        if (is_wp_error($lab_guard)) return $lab_guard;
+
         $url = get_option('lisun_en_site_url', '');
         $username = get_option('lisun_en_site_username', '');
         $password = get_option('lisun_en_site_password', '');
@@ -608,6 +625,9 @@ class Lisun_Manual_Sync {
     }
 
     public static function push_to_english($title, $content, $source_id, $target_id = null, $seo_source_id = null, $en_seo = []) {
+        $lab_guard = self::llm_lab_remote_write_guard();
+        if (is_wp_error($lab_guard)) return $lab_guard;
+
         $url = get_option('lisun_en_site_url', '');
         $username = get_option('lisun_en_site_username', '');
         $password = get_option('lisun_en_site_password', '');
@@ -905,6 +925,9 @@ class Lisun_Manual_Sync {
      * @return bool|WP_Error
      */
     public static function delete_remote($remote_id, $force = false) {
+        $lab_guard = self::llm_lab_remote_write_guard();
+        if (is_wp_error($lab_guard)) return $lab_guard;
+
         $url = get_option('lisun_en_site_url', '');
         $username = get_option('lisun_en_site_username', '');
         $password = get_option('lisun_en_site_password', '');
@@ -952,6 +975,9 @@ class Lisun_Manual_Sync {
      * @return array|WP_Error 成功返回 ['message' => string, 'total' => int]
      */
     public static function push_glossary($glossary) {
+        $lab_guard = self::llm_lab_remote_write_guard();
+        if (is_wp_error($lab_guard)) return $lab_guard;
+
         $url = get_option('lisun_en_site_url', '');
         $username = get_option('lisun_en_site_username', '');
         $password = get_option('lisun_en_site_password', '');
