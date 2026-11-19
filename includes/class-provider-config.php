@@ -1,0 +1,98 @@
+<?php
+/** Provider-specific translation credentials and one-time legacy migration. */
+
+if (!defined('ABSPATH')) exit;
+
+class Lisun_Manual_Provider_Config {
+    const MIGRATION_OPTION = 'lisun_provider_keys_migrated_v1';
+
+    private static $key_options = [
+        'deepseek'   => 'lisun_deepseek_api_key',
+        'openai'     => 'lisun_openai_api_key',
+        'gemini'     => 'lisun_gemini_api_key',
+        'openrouter' => 'lisun_openrouter_api_key',
+        'doubao'     => 'lisun_doubao_key',
+        'deepl'      => 'lisun_deepl_key',
+        'google'     => 'lisun_google_key',
+    ];
+
+    public static function init() {
+        add_action('admin_init', [__CLASS__, 'register_settings'], 30);
+        add_action('admin_footer', [__CLASS__, 'hide_legacy_fields']);
+    }
+
+    public static function register_settings() {
+        $group = 'lisun_manual_settings_group';
+        $page = 'lisun_manual_settings';
+        $labels = [
+            'deepseek' => 'DeepSeek API Key',
+            'doubao' => 'Doubao / Volcengine Ark API Key',
+            'openai' => 'OpenAI API Key',
+            'gemini' => 'Gemini API Key',
+            'openrouter' => 'OpenRouter API Key',
+            'deepl' => 'DeepL API Key',
+        ];
+        foreach ($labels as $provider => $label) {
+            $option = self::key_option($provider);
+            register_setting($group, $option, [
+                'type' => 'string',
+                'sanitize_callback' => 'sanitize_text_field',
+                'default' => '',
+            ]);
+            add_settings_field(
+                $option,
+                $label,
+                [__CLASS__, 'render_password_field'],
+                $page,
+                'lisun_deepseek',
+                ['option' => $option]
+            );
+        }
+    }
+
+    public static function render_password_field($args) {
+        $option = (string) ($args['option'] ?? '');
+        printf(
+            '<input type="password" class="regular-text" name="%1$s" value="%2$s" autocomplete="new-password">',
+            esc_attr($option),
+            esc_attr((string) get_option($option, ''))
+        );
+    }
+
+    public static function hide_legacy_fields() {
+        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+        if (!$screen || strpos((string) $screen->id, 'lisun-manual-settings') === false) return;
+        echo '<script>jQuery(function($){'
+            . '$("input[name=lisun_deepseek_key]").closest("tr").hide();'
+            . '$("input[name=lisun_doubao_enabled]").closest("tr").hide();'
+            . '});</script>';
+    }
+
+    public static function key_option($provider) {
+        return self::$key_options[(string) $provider] ?? '';
+    }
+
+    public static function api_key($provider) {
+        $provider = (string) $provider;
+        $option = self::key_option($provider);
+        $key = $option !== '' ? trim((string) get_option($option, '')) : '';
+        if ($key !== '') return $key;
+        $selected = (string) get_option('lisun_llm_provider', 'deepseek');
+        if ($provider === $selected && $provider !== 'google') {
+            return trim((string) get_option('lisun_deepseek_key', ''));
+        }
+        return '';
+    }
+
+    public static function migrate_legacy_key_once() {
+        if (get_option(self::MIGRATION_OPTION, false)) return;
+        $provider = (string) get_option('lisun_llm_provider', 'deepseek');
+        $legacy = trim((string) get_option('lisun_deepseek_key', ''));
+        $target = self::key_option($provider);
+        if ($legacy !== '' && $target !== '' && $provider !== 'google'
+            && trim((string) get_option($target, '')) === '') {
+            update_option($target, $legacy, false);
+        }
+        update_option(self::MIGRATION_OPTION, 1, false);
+    }
+}

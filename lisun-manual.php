@@ -35,6 +35,7 @@ require_once LISUN_MANUAL_PATH . 'includes/class-pdf-download.php';
 require_once LISUN_MANUAL_PATH . 'includes/class-admin-menu.php';
 require_once LISUN_MANUAL_PATH . 'includes/class-import.php';
 require_once LISUN_MANUAL_PATH . 'includes/class-import-parser.php';
+require_once LISUN_MANUAL_PATH . 'includes/class-provider-config.php';
 // REST 路由必须在插件加载时提前挂载，避免 REST 请求时序导致接口未注册。
 add_action('rest_api_init', ['Lisun_Manual_Import_Parser', 'register_rest_routes']);
 require_once LISUN_MANUAL_PATH . 'includes/class-glossary.php';
@@ -144,6 +145,8 @@ function lisun_manual_fix_autoload_once() {
  * 初始化插件
  */
 function lisun_manual_init() {
+    // [修改时间：2026-11-19 +08:00] 将旧通用 Key 一次性迁移到当前提供商的独立字段。
+    Lisun_Manual_Provider_Config::migrate_legacy_key_once();
     // 把历史大 option 从 autoload 迁移为非 autoload（一次性，避免每次请求 OOM）
     lisun_manual_fix_autoload_once();
     Lisun_Manual_V2_Schema::maybe_upgrade();
@@ -158,6 +161,7 @@ function lisun_manual_init() {
     Lisun_Manual_Admin_Menu::init();
     Lisun_Manual_Import_Parser::init();
     Lisun_Manual_Import::init();
+    Lisun_Manual_Provider_Config::init();
     Lisun_Manual_Glossary::init();
     Lisun_Manual_Glossary_Apply::init();
     Lisun_Manual_Translate::init();

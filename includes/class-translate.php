@@ -1114,7 +1114,9 @@ class Lisun_Manual_Translate {
     private static function get_config() {
         $provider = get_option('lisun_llm_provider', 'deepseek');
         $api_url  = get_option('lisun_llm_api_url', '');
-        $api_key  = get_option('lisun_deepseek_key', '');
+        $api_key  = class_exists('Lisun_Manual_Provider_Config')
+            ? Lisun_Manual_Provider_Config::api_key($provider)
+            : get_option('lisun_deepseek_key', '');
         $model    = get_option('lisun_deepseek_model', 'deepseek-chat');
 
         // ★ Relay 中转：国内服务器通过美国 relay 访问被墙 API
@@ -1139,8 +1141,10 @@ class Lisun_Manual_Translate {
         if (empty($api_url)) {
             $defaults = [
                 'deepseek' => 'https://api.deepseek.com/chat/completions',
+                'doubao'   => 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
                 'openai'   => 'https://api.openai.com/v1/chat/completions',
                 'gemini'   => 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+                'openrouter' => 'https://openrouter.ai/api/v1/chat/completions',
                 'deepl'    => 'https://api.deepl.com/v2/translate',
             ];
             $api_url = $defaults[$provider] ?? 'https://api.deepseek.com/chat/completions';
@@ -1150,8 +1154,10 @@ class Lisun_Manual_Translate {
         if (empty($model)) {
             $default_models = [
                 'deepseek' => 'deepseek-chat',
+                'doubao'   => (string) get_option('lisun_doubao_model', 'Doubao-Seed-2.1-pro'),
                 'openai'   => 'gpt-4o',
                 'gemini'   => 'gemini-3.6-flash',
+                'openrouter' => 'openrouter/auto',
                 'deepl'    => '',
             ];
             $model = $default_models[$provider] ?? 'deepseek-chat';
@@ -1292,7 +1298,7 @@ class Lisun_Manual_Translate {
     public static function is_configured() {
         $provider = get_option('lisun_llm_provider', 'deepseek');
         if ($provider === 'deepl') {
-            return !empty(get_option('lisun_deepseek_key', ''));
+            return Lisun_Manual_Provider_Config::api_key('deepl') !== '';
         }
         $config = self::get_config();
         return !empty($config['api_key'])
@@ -4828,7 +4834,15 @@ class Lisun_Manual_Translate {
             return self::call_deepl_api($text, $index, $total, $with_anchors);
         }
 
-        if (get_option('lisun_doubao_enabled', false) && !empty(get_option('lisun_doubao_key', ''))) {
+        // [修改时间：2026-11-19 +08:00] 豆包现在是普通单轮提供商，
+        // 不再先翻译后交给 DeepSeek 润色。
+        if ($provider === 'doubao') {
+            $result = self::call_doubao_api($text, $index, $total);
+            return $with_anchors ? self::validate_segment_anchors($text, $result) : $result;
+        }
+
+        // Deprecated dual-pass path retained only for reading old code history.
+        if (false && get_option('lisun_doubao_enabled', false) && !empty(get_option('lisun_doubao_key', ''))) {
             // 第一轮：豆包翻译
             $r1 = self::call_doubao_api($text, $index, $total);
             if (is_wp_error($r1)) {
@@ -7400,7 +7414,7 @@ RULES:
      * @return array|WP_Error
      */
     private static function call_deepl_html_api($text, $index = 0, $total = 1) {
-        $api_key = get_option('lisun_deepseek_key', '');
+        $api_key = Lisun_Manual_Provider_Config::api_key('deepl');
         if (empty($api_key)) {
             return new WP_Error('no_deepl_key', 'DeepL API 未配置（请在 API 密钥字段填写 DeepL Key）');
         }
@@ -7683,7 +7697,7 @@ RULES:
     }
 
     private static function call_deepl_api($text, $index = 0, $total = 1, $with_anchors = true) {
-        $api_key = get_option('lisun_deepseek_key', '');
+        $api_key = Lisun_Manual_Provider_Config::api_key('deepl');
         if (empty($api_key)) {
             return new WP_Error('no_deepl_key', 'DeepL API 未配置（请在 API 密钥字段填写 DeepL Key）');
         }
@@ -9641,7 +9655,7 @@ RULES:
             . ' source="' . mb_substr($source_title, 0, 200) . '"');
 
         // DeepL 标题翻译
-        if ($provider === 'deepl' && !empty(get_option('lisun_deepseek_key', ''))) {
+        if ($provider === 'deepl' && Lisun_Manual_Provider_Config::api_key('deepl') !== '') {
             // post_title 是纯文本字段：只走纯文本翻译，绝不生成或保存 HTML 锚点。
             $result = self::call_deepl_api($chinese_title, 0, 1, false);
             if (!is_wp_error($result) && !empty($result['text'])) {

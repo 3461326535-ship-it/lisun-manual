@@ -113,6 +113,7 @@ class Lisun_Manual_Settings {
             'default' => 'deepseek',
             'options' => [
                 'deepseek'   => 'DeepSeek (LLM)',
+                'doubao'     => 'Doubao / Volcengine Ark (LLM)',
                 'deepl'      => 'DeepL (机翻引擎)',
                 'google'     => 'Google 翻译 (Cloud Translation，机翻引擎)',
                 'openai'     => 'OpenAI (ChatGPT, LLM)',
@@ -1281,7 +1282,7 @@ class Lisun_Manual_Settings {
             // newly pasted key appear ineffective until after a page reload.
             $deepl_key = !empty($form_api_key)
                 ? sanitize_text_field((string) $form_api_key)
-                : get_option('lisun_deepseek_key', '');
+                : Lisun_Manual_Provider_Config::api_key('deepl');
             if (empty($deepl_key)) {
                 return new WP_REST_Response(['success' => false, 'data' => ['message' =>
                     '请先在 API 密钥字段中输入 DeepL API Key 并保存'
@@ -1349,7 +1350,7 @@ class Lisun_Manual_Settings {
         }
 
         // OpenAI 兼容 API 连接测试
-        $api_key = get_option('lisun_deepseek_key', '');
+        $api_key = Lisun_Manual_Provider_Config::api_key($provider);
         if (empty($api_key) && !empty($form_api_key)) {
             $api_key = $form_api_key; // 回退到表单值
         }
@@ -1362,7 +1363,14 @@ class Lisun_Manual_Settings {
             $api_url = $form_api_url;
         }
         if (empty($api_url)) {
-            $api_url = 'https://api.deepseek.com/chat/completions';
+            $provider_urls = [
+                'deepseek' => 'https://api.deepseek.com/chat/completions',
+                'doubao' => 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+                'openai' => 'https://api.openai.com/v1/chat/completions',
+                'gemini' => 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+                'openrouter' => 'https://openrouter.ai/api/v1/chat/completions',
+            ];
+            $api_url = $provider_urls[$provider] ?? $provider_urls['deepseek'];
         }
 
         $model = get_option('lisun_deepseek_model', 'deepseek-chat');
@@ -1370,7 +1378,16 @@ class Lisun_Manual_Settings {
             $model = $form_model;
         }
         if (empty($model)) {
-            $model = 'deepseek-chat';
+            $model = $provider === 'doubao'
+                ? (string) get_option('lisun_doubao_model', 'Doubao-Seed-2.1-pro')
+                : 'deepseek-chat';
+        }
+        if ($provider === 'doubao') {
+            $endpoint = trim((string) get_option('lisun_doubao_endpoint', ''));
+            if ($endpoint !== '') {
+                $api_url = 'https://ark.cn-beijing.volces.com/api/v3/endpoints/'
+                    . rawurlencode($endpoint) . '/chat/completions';
+            }
         }
         $timeout = intval(get_option('lisun_deepseek_timeout', 30));
 

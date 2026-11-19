@@ -126,14 +126,39 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         $provider = (string) get_option('lisun_llm_lab_provider', 'deepseek');
         $defaults = [
             'deepseek' => 'https://api.deepseek.com/chat/completions',
+            'doubao' => 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
             'openai' => 'https://api.openai.com/v1/chat/completions',
             'openrouter' => 'https://openrouter.ai/api/v1/chat/completions',
             'gemini' => 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
         ];
+        $default_models = [
+            'deepseek' => 'deepseek-chat',
+            'doubao' => (string) get_option('lisun_doubao_model', 'Doubao-Seed-2.1-pro'),
+            'openai' => 'gpt-4o',
+            'openrouter' => 'openrouter/auto',
+            'gemini' => 'gemini-3.6-flash',
+        ];
+        $api_url = trim((string) get_option('lisun_llm_lab_api_url', ''));
+        if ($api_url === '') $api_url = $defaults[$provider] ?? $defaults['deepseek'];
+        if ($provider === 'doubao') {
+            $endpoint = trim((string) get_option('lisun_doubao_endpoint', ''));
+            if ($endpoint !== '') {
+                $api_url = 'https://ark.cn-beijing.volces.com/api/v3/endpoints/'
+                    . rawurlencode($endpoint) . '/chat/completions';
+            }
+        }
+        $api_key = class_exists('Lisun_Manual_Provider_Config')
+            ? Lisun_Manual_Provider_Config::api_key($provider)
+            : '';
+        // Lab-only compatibility for configurations created before the
+        // provider-specific credential layer existed.
+        if ($api_key === '') {
+            $api_key = trim((string) get_option('lisun_llm_lab_api_key', ''));
+        }
         return [
-            'api_url' => trim((string) get_option('lisun_llm_lab_api_url', $defaults[$provider] ?? $defaults['deepseek'])),
-            'api_key' => trim((string) get_option('lisun_llm_lab_api_key', '')),
-            'model' => trim((string) get_option('lisun_llm_lab_model', $provider === 'deepseek' ? 'deepseek-chat' : '')),
+            'api_url' => $api_url,
+            'api_key' => $api_key,
+            'model' => trim((string) get_option('lisun_llm_lab_model', $default_models[$provider] ?? '')),
             'temperature' => (float) get_option('lisun_llm_lab_temperature', 0),
             'max_tokens' => max(0, (int) get_option('lisun_llm_lab_max_tokens', 8192)),
             'timeout' => max(30, (int) get_option('lisun_llm_lab_timeout', 180)),

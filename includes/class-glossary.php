@@ -1697,7 +1697,7 @@ class Lisun_Manual_Glossary {
             ]);
         }
         $hash = md5(wp_json_encode($entries, JSON_UNESCAPED_UNICODE));
-        $api_key = (string) get_option('lisun_deepseek_key', '');
+        $api_key = (string) Lisun_Manual_Provider_Config::api_key('deepl');
         $relay_url = rtrim((string) get_option('lisun_relay_url', ''), '/');
         $relay_secret = (string) get_option('lisun_relay_secret', '');
         $fingerprint = hash('sha256', $api_key . '|' . $relay_url . '|' . $relay_secret);
@@ -1811,7 +1811,7 @@ class Lisun_Manual_Glossary {
         }
 
         $hash = md5(wp_json_encode($entries, JSON_UNESCAPED_UNICODE));
-        $api_key = (string) get_option('lisun_deepseek_key', '');
+        $api_key = (string) Lisun_Manual_Provider_Config::api_key('deepl');
         $relay_url = rtrim((string) get_option('lisun_relay_url', ''), '/');
         $relay_secret = (string) get_option('lisun_relay_secret', '');
         // Relay 模式下本地可能没有真实 API Key，因此同时纳入 Relay 配置指纹。
@@ -2127,7 +2127,7 @@ class Lisun_Manual_Glossary {
         }
 
         if ($result['route_mode'] !== 'relay' && (string) get_option('lisun_deepl_pro', false) !== '1'
-            && (string) get_option('lisun_deepseek_key', '') === '') {
+            && (string) Lisun_Manual_Provider_Config::api_key('deepl') === '') {
             $result['message'] = '未配置 DeepL API Key，无法连接';
             return $result;
         }
@@ -2177,7 +2177,7 @@ class Lisun_Manual_Glossary {
      * @return array|WP_Error ['code' => int, 'data' => array]
      */
     public static function deepl_api_request($path, $method = 'POST', $body = null, $trace_context = []) {
-        $api_key = (string) get_option('lisun_deepseek_key', '');
+        $api_key = (string) Lisun_Manual_Provider_Config::api_key('deepl');
         $relay_url = rtrim((string) get_option('lisun_relay_url', ''), '/');
         $relay_secret = (string) get_option('lisun_relay_secret', '');
         $is_relay = $relay_url !== '' && $relay_secret !== '';
