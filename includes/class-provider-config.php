@@ -91,12 +91,18 @@ class Lisun_Manual_Provider_Config {
             var legacyWorkflowRows = rows([
                 'lisun_term_anchors_enabled', 'lisun_translation_engine_v2', 'lisun_deepl_trace_enabled'
             ]);
+            var googleV3Rows = rows([
+                'lisun_google_sa_path', 'lisun_google_project', 'lisun_google_location',
+                'lisun_google_bucket', 'lisun_google_object_prefix'
+            ]);
+            var googleV2Rows = rows(['lisun_google_key', 'lisun_google_endpoint']);
 
             row('lisun_deepseek_key').hide();
             row('lisun_doubao_enabled').hide();
 
             function refreshProviderFields() {
                 var provider = $('select[name="lisun_llm_provider"]').val() || 'deepseek';
+                var googleMode = $('select[name="lisun_google_mode"]').val() || 'v3_glossary';
                 var isLlm = $.inArray(provider, ['deepseek', 'doubao', 'openai', 'gemini', 'openrouter', 'custom']) !== -1;
                 providerKeyRows.hide();
                 doubaoRows.hide();
@@ -116,6 +122,15 @@ class Lisun_Manual_Provider_Config {
                     deeplRows.show();
                     legacyWorkflowRows.show();
                 }
+                if (provider === 'google') {
+                    googleV3Rows.toggle(googleMode === 'v3_glossary');
+                    googleV2Rows.toggle(googleMode === 'v2_plain');
+                }
+
+                row('lisun_llm_provider').find('.description').toggle(provider === 'deepl' || provider === 'google');
+                var termsAvailable = !(provider === 'google' && googleMode === 'v2_plain');
+                row('lisun_glossary_enabled').toggle(termsAvailable);
+                row('lisun_show_post_term_panel').toggle(termsAvailable);
 
                 var glossaryHelp = provider === 'deepl'
                     ? '翻译时使用本篇筛选后的术语，并同步为 DeepL Glossary。'
@@ -126,6 +141,7 @@ class Lisun_Manual_Provider_Config {
             }
 
             $('select[name="lisun_llm_provider"]').on('change.lisunProviderUi', refreshProviderFields);
+            $('select[name="lisun_google_mode"]').on('change.lisunProviderUi', refreshProviderFields);
             refreshProviderFields();
         });
         </script>
