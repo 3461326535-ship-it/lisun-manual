@@ -5819,9 +5819,10 @@ class Lisun_Manual_Translate {
         }
         $model = get_option('lisun_doubao_model', 'Doubao-Seed-2.1-pro');
         $ep_id = get_option('lisun_doubao_endpoint', '');
-        $api_url = $ep_id
-            ? 'https://ark.cn-beijing.volces.com/api/v3/endpoints/' . $ep_id . '/chat/completions'
-            : 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
+        $api_url = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
+        if ($ep_id) {
+            $model = $ep_id;
+        }
 
         // 型号保护
         $protection = self::protect_model_numbers($text);

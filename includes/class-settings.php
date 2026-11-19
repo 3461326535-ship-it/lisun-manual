@@ -714,6 +714,7 @@ class Lisun_Manual_Settings {
         // 提供商预设 URL
         $provider_urls = [
             'deepseek'   => 'https://api.deepseek.com/chat/completions',
+            'doubao'     => 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
             'openai'     => 'https://api.openai.com/v1/chat/completions',
             'gemini'     => 'https://generativelanguage.googleapis.com/v1beta/models',
             'openrouter' => 'https://openrouter.ai/api/v1/chat/completions',
@@ -722,6 +723,7 @@ class Lisun_Manual_Settings {
         ];
         $provider_models = [
             'deepseek'   => 'deepseek-chat',
+            'doubao'     => '',
             'openai'     => 'gpt-4o',
             'gemini'     => 'gemini-3.6-flash',
             'openrouter' => 'openrouter/auto',
@@ -967,7 +969,15 @@ class Lisun_Manual_Settings {
                     // 收集当前表单值（用户可能填了新值还没保存，作为服务端回退）
                     var formData = {
                         provider: $('select[name="lisun_llm_provider"]').val(),
-                        api_key: $('input[name="lisun_deepseek_key"]').val(),
+                        api_key: (function () {
+                            var provider = $('select[name="lisun_llm_provider"]').val();
+                            var fields = {
+                                deepseek: 'lisun_deepseek_api_key', doubao: 'lisun_doubao_key',
+                                openai: 'lisun_openai_api_key', gemini: 'lisun_gemini_api_key',
+                                openrouter: 'lisun_openrouter_api_key', deepl: 'lisun_deepl_key'
+                            };
+                            return fields[provider] ? $('input[name="' + fields[provider] + '"]').val() : '';
+                        })(),
                         api_url: $('input[name="lisun_llm_api_url"]').val(),
                         model: $('input[name="lisun_deepseek_model"]').val(),
                         deepl_pro: $('input[name="lisun_deepl_pro"]').is(':checked'),
@@ -1004,24 +1014,14 @@ class Lisun_Manual_Settings {
             // 按钮放在翻译 API 设置表格底部
             // 优先追加到 DeepL formality 行之后（DeepL 字段组的最后一行），
             // 这样无论哪个 provider 被选中，按钮都固定在表格末尾
-            var $targetRow = $('select[name="lisun_deepl_formality"]').closest('tr');
-            if ($targetRow.length) {
-                $targetRow.after(
-                    $('<tr class="lisun-test-api-row">').append($('<th>')).append($('<td>').append($btnApi))
-                );
-            } else {
-                $('input[name="lisun_deepseek_key"]').closest('table').find('tr').last().after(
-                    $('<tr class="lisun-test-api-row">').append($('<th>')).append($('<td>').append($btnApi))
-                );
+            var $apiSaveBar = $('#lisun_deepseek-panel .lisun-settings-panel-savebar');
+            if ($apiSaveBar.length) {
+                $btnApi.css('margin-left', 0).text('测试当前引擎');
+                $apiSaveBar.prepend($btnApi);
             }
             // Keep the normal WordPress submit control beside the test button.
             // It remains inside the same form, but is no longer hidden in a
             // different tab or rendered as a large full-width bar.
-            if ($saveBar && $saveBar.length) {
-                var $apiActions = $('<div class="lisun-api-actions"></div>');
-                $btnApi.after($apiActions);
-                $apiActions.append($btnApi).append($saveBar);
-            }
 
             // —— 提供商切换联动 ——
             var $provider = $('select[name="lisun_llm_provider"]');
@@ -1385,8 +1385,8 @@ class Lisun_Manual_Settings {
         if ($provider === 'doubao') {
             $endpoint = trim((string) get_option('lisun_doubao_endpoint', ''));
             if ($endpoint !== '') {
-                $api_url = 'https://ark.cn-beijing.volces.com/api/v3/endpoints/'
-                    . rawurlencode($endpoint) . '/chat/completions';
+                $api_url = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
+                $model = $endpoint;
             }
         }
         $timeout = intval(get_option('lisun_deepseek_timeout', 30));

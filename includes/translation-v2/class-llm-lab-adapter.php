@@ -142,10 +142,7 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         if ($api_url === '') $api_url = $defaults[$provider] ?? $defaults['deepseek'];
         if ($provider === 'doubao') {
             $endpoint = trim((string) get_option('lisun_doubao_endpoint', ''));
-            if ($endpoint !== '') {
-                $api_url = 'https://ark.cn-beijing.volces.com/api/v3/endpoints/'
-                    . rawurlencode($endpoint) . '/chat/completions';
-            }
+            $api_url = $defaults['doubao'];
         }
         $api_key = class_exists('Lisun_Manual_Provider_Config')
             ? Lisun_Manual_Provider_Config::api_key($provider)
@@ -158,7 +155,9 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         return [
             'api_url' => $api_url,
             'api_key' => $api_key,
-            'model' => trim((string) get_option('lisun_llm_lab_model', $default_models[$provider] ?? '')),
+            'model' => $provider === 'doubao' && $endpoint !== ''
+                ? $endpoint
+                : trim((string) get_option('lisun_llm_lab_model', $default_models[$provider] ?? '')),
             'temperature' => (float) get_option('lisun_llm_lab_temperature', 0),
             'max_tokens' => max(0, (int) get_option('lisun_llm_lab_max_tokens', 8192)),
             'timeout' => max(30, (int) get_option('lisun_llm_lab_timeout', 180)),
