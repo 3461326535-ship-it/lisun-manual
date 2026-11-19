@@ -87,7 +87,10 @@ class Lisun_Manual_Provider_Config {
             var genericLlmRows = rows(['lisun_llm_api_url', 'lisun_deepseek_model']);
             var relayRows = rows(['lisun_relay_url', 'lisun_relay_secret']);
             var doubaoRows = rows(['lisun_doubao_key', 'lisun_doubao_model', 'lisun_doubao_endpoint']);
-            var deeplRows = rows(['lisun_deepl_pro', 'lisun_deepl_formality', 'lisun_trace_deepl']);
+            var deeplRows = rows(['lisun_deepl_pro', 'lisun_deepl_formality']);
+            var legacyWorkflowRows = rows([
+                'lisun_term_anchors_enabled', 'lisun_translation_engine_v2', 'lisun_deepl_trace_enabled'
+            ]);
 
             row('lisun_deepseek_key').hide();
             row('lisun_doubao_enabled').hide();
@@ -98,6 +101,7 @@ class Lisun_Manual_Provider_Config {
                 providerKeyRows.hide();
                 doubaoRows.hide();
                 deeplRows.hide();
+                legacyWorkflowRows.hide();
                 commonLlmRows.toggle(isLlm);
                 genericLlmRows.toggle(isLlm && provider !== 'doubao');
                 relayRows.toggle($.inArray(provider, ['openai', 'gemini', 'openrouter', 'custom']) !== -1);
@@ -108,7 +112,17 @@ class Lisun_Manual_Provider_Config {
                 }
 
                 if (keyFields[provider]) row(keyFields[provider]).show();
-                if (provider === 'deepl') deeplRows.show();
+                if (provider === 'deepl') {
+                    deeplRows.show();
+                    legacyWorkflowRows.show();
+                }
+
+                var glossaryHelp = provider === 'deepl'
+                    ? '翻译时使用本篇筛选后的术语，并同步为 DeepL Glossary。'
+                    : provider === 'google'
+                        ? '翻译时使用本篇筛选后的术语，并同步为 Google 术语表。'
+                        : '翻译时把本篇筛选后的产品名称和专业术语作为强制规则交给当前 LLM；关闭后不向模型提供术语约束。';
+                row('lisun_glossary_enabled').find('.description').text(glossaryHelp);
             }
 
             $('select[name="lisun_llm_provider"]').on('change.lisunProviderUi', refreshProviderFields);
