@@ -6,6 +6,8 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
     private $terms = [];
     private $request_count = 0;
     private $characters = 0;
+    private $split_retries = 0;
+    private $corrective_retries = 0;
     private $max_batch_units = 10;
     private $max_batch_xml_chars = 14000;
 
@@ -30,7 +32,12 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
     }
 
     public function stats() {
-        return ['requests' => $this->request_count, 'characters' => $this->characters];
+        return [
+            'requests' => $this->request_count,
+            'characters' => $this->characters,
+            'split_retries' => $this->split_retries,
+            'corrective_retries' => $this->corrective_retries,
+        ];
     }
 
     private function make_batches($prepared_units) {
@@ -46,12 +53,18 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         return $batches;
     }
 
-    private function translate_batch_with_split($batch, $post_id, $batch_id) {
-        $translated = $this->request_batch($batch, $post_id, $batch_id);
+    private function translate_batch_with_split($batch, $post_id, $batch_id, $corrective_retry = false) {
+        $translated = $this->request_batch($batch, $post_id, $batch_id, $corrective_retry);
         if (!is_wp_error($translated)) return $translated;
+        if (count($batch) === 1 && $translated->get_error_code() === 'llm_lab_language_validation' && !$corrective_retry) {
+            $this->corrective_retries++;
+            return $this->translate_batch_with_split($batch, $post_id, $batch_id . 'r', true);
+        }
         if (count($batch) <= 1 || !in_array($translated->get_error_code(), [
-            'llm_lab_truncated', 'llm_lab_non_xml', 'llm_lab_batch_mismatch', 'llm_lab_restore_failed'
+            'llm_lab_truncated', 'llm_lab_non_xml', 'llm_lab_batch_mismatch',
+            'llm_lab_restore_failed', 'llm_lab_language_validation'
         ], true)) return $translated;
+        $this->split_retries++;
         $middle = (int) ceil(count($batch) / 2);
         $left = $this->translate_batch_with_split(array_slice($batch, 0, $middle), $post_id, $batch_id . 'a');
         if (is_wp_error($left)) return $left;
@@ -59,7 +72,7 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         return is_wp_error($right) ? $right : array_merge($left, $right);
     }
 
-    private function request_batch($batch, $post_id, $batch_id) {
+    private function request_batch($batch, $post_id, $batch_id, $corrective_retry = false) {
         $config = $this->config();
         if ($config['api_key'] === '') return new WP_Error('llm_lab_key_missing', 'LLM API Key 未配置');
         if ($config['api_url'] === '' || $config['model'] === '') return new WP_Error('llm_lab_config_missing', 'LLM API 地址或模型未配置');
@@ -71,7 +84,9 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         $xml .= '</lisun-batch>';
         $body = ['model' => $config['model'], 'temperature' => $config['temperature'], 'messages' => [
             ['role' => 'system', 'content' => $this->system_prompt($batch)],
-            ['role' => 'user', 'content' => "Translate every unit in this batch. Return only the complete lisun-batch XML in the original order.\n\n" . $xml],
+            ['role' => 'user', 'content' => ($corrective_retry
+                ? "Correct the previous language-validation failure. Do not leave Chinese and do not place suffixes such as s, es, ed, or ing outside a <t> element. Return only the complete lisun-batch XML.\n\n"
+                : "Translate every unit in this batch. Return only the complete lisun-batch XML in the original order.\n\n") . $xml],
         ]];
         if ($config['provider'] === 'doubao') $body['thinking'] = ['type' => 'disabled'];
         if ($config['max_tokens'] > 0) $body['max_tokens'] = $config['max_tokens'];
@@ -104,11 +119,33 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
             $node = $nodes->item($index);
             $expected = (string) ($prepared['unit']['unit_key'] ?? '');
             if (!$node || $node->getAttribute('key') !== $expected) return new WP_Error('llm_lab_batch_mismatch', 'LLM 改变了单元顺序或 key');
-            $restored = Lisun_Manual_V2_Unit_Transport::restore($prepared, $dom->saveXML($node));
+            $unit_xml = $dom->saveXML($node);
+            $language_issue = $this->validate_language_output($unit_xml);
+            if (is_wp_error($language_issue)) return $language_issue;
+            $restored = Lisun_Manual_V2_Unit_Transport::restore($prepared, $unit_xml);
             if (is_wp_error($restored)) return new WP_Error('llm_lab_restore_failed', 'LLM 输出未通过 V2 校验：' . $restored->get_error_message(), ['unit_key' => $expected]);
+            // Term anchoring can rewrite an otherwise valid model response.
+            // Validate the actual HTML that will be assembled, not only the
+            // transport XML returned by the provider.
+            $language_issue = $this->validate_language_output((string) ($restored['target_template'] ?? ''));
+            if (is_wp_error($language_issue)) return $language_issue;
             $results[$expected] = $restored;
         }
         return $results;
+    }
+
+    private function validate_language_output($unit_xml) {
+        if (preg_match('/[\x{3400}-\x{4dbf}\x{4e00}-\x{9fff}\x{f900}-\x{faff}]/u', $unit_xml)) {
+            return new WP_Error('llm_lab_language_validation', 'LLM 输出仍包含中文');
+        }
+        if (preg_match('/<\/t>\s*(?:s|es|ed|ing)\b/i', $unit_xml, $match)) {
+            return new WP_Error('llm_lab_language_validation', '术语标签外出现游离词尾：' . trim((string) $match[0]));
+        }
+        $visible = html_entity_decode(wp_strip_all_tags($unit_xml), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        if (preg_match('/\b[A-Za-z]{2,}\s+(?:s|es|ed|ing)\b/i', $visible, $match)) {
+            return new WP_Error('llm_lab_language_validation', '输出中出现游离词尾：' . trim((string) $match[0]));
+        }
+        return true;
     }
 
     private function system_prompt($batch) {
@@ -119,6 +156,12 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
             'Translate only human-readable Chinese text nodes. Keep existing English, model numbers, standards, units, URLs and code unchanged.',
             'Never leave Chinese in the output. Never merge, omit, duplicate, or invent content.',
             'Text inside each <t> element is a terminology occurrence. Use the mandatory glossary and keep the <t> element and id.',
+            'Glossary wording is canonical, but capitalization is grammatical: lowercase common equipment names in running text unless they begin a sentence, occur in a title, or are part of an official product/model name.',
+            'Never place suffixes such as s, es, ed, or ing outside a <t> element. If inflection is needed, keep the complete inflected term inside the same <t> element or rewrite the sentence.',
+            'In normal technical prose, put a space between a number and an SI unit: 1 m, 300 mm, 40 °C. Preserve model numbers, identifiers, formulas, and strings where spacing is semantically significant.',
+            'Wrong: <t id="x">power cord</t> s. Correct: <t id="x">power cords</t>.',
+            'Wrong in running text: the <t id="x">Integrating Sphere</t> is closed. Correct: the <t id="x">integrating sphere</t> is closed.',
+            'Wrong: diameter 300mm. Correct: diameter 300 mm.',
         ];
         $glossary = [];
         foreach ($batch as $prepared) foreach ((array) ($prepared['occurrences'] ?? []) as $occurrence) {

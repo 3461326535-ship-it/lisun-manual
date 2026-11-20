@@ -359,7 +359,15 @@ class Lisun_Manual_V2_Materializer {
                 $tail_char = substr(rtrim($last_term_value), -1);
                 $leading = ltrim($part);
                 $head_char = $leading !== '' ? substr($leading, 0, 1) : '';
-                if ($tail_char !== '' && preg_match('/[A-Za-z]/', $tail_char)
+                // [修改时间：2026-11-20 10:12:00 +08:00]
+                // A provider may inflect a protected glossary term by leaving
+                // the suffix immediately after its slot.  Do not let the
+                // generic word-boundary guard turn "sphere" + "s" into
+                // "sphere s"; preserve the provider's intended inflection.
+                if (preg_match('/^(s|es|ed|ing)\b/i', $leading, $suffix_match)) {
+                    $result .= (string) $suffix_match[1];
+                    $part = substr($leading, strlen((string) $suffix_match[1]));
+                } elseif ($tail_char !== '' && preg_match('/[A-Za-z]/', $tail_char)
                     && $head_char !== '' && preg_match('/[A-Za-z]/', $head_char)) {
                     $part = ' ' . $leading;
                 }
