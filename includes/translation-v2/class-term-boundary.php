@@ -213,7 +213,13 @@ class Lisun_Manual_V2_Term_Boundary {
         if ($target === '') return 0;
         $body = self::normalize($visible);
         if ($body === '') return 0;
-        $pattern = '/(?<![a-z0-9])' . preg_quote($target, '/') . '(?![a-z0-9])/iu';
+        // [修改时间：2026-11-20 10:32:00 +08:00]
+        // A provider may legitimately inflect a glossary target while the
+        // transport keeps the canonical term as the stable anchor. Treat a
+        // small, explicit suffix set as the same visible occurrence. A later
+        // glossary wording change still fails this probe because its base
+        // target no longer matches, routing that unit to retranslation.
+        $pattern = '/(?<![a-z0-9])' . preg_quote($target, '/') . '(?:s|es|ed|ing)?(?![a-z0-9])/iu';
         $count = preg_match_all($pattern, $body, $matches);
         return $count === false ? 0 : (int) $count;
     }
