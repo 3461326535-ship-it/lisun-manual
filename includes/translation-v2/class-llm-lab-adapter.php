@@ -10,6 +10,7 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
     private $corrective_retries = 0;
     private $max_batch_units = 10;
     private $max_batch_xml_chars = 14000;
+    private $concurrency = 3;
 
     public function __construct($terms = null) {
         $this->terms = is_array($terms) ? array_values($terms) : [];
@@ -21,14 +22,91 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         $total = count($prepared_units);
         $batches = $this->make_batches($prepared_units);
         $completed = 0;
-        foreach ($batches as $batch_index => $batch) {
-            $translated = $this->translate_batch_with_split($batch, $post_id, (string) $batch_index);
-            if (is_wp_error($translated)) return $translated;
-            $results = array_merge($results, $translated);
-            $completed += count($batch);
-            if (is_callable($on_batch)) call_user_func($on_batch, $completed, $total, $batch_index + 1, count($batches));
+        foreach (array_chunk($batches, $this->concurrency, true) as $batch_group) {
+            $attempts = $this->request_batch_group($batch_group, $post_id);
+            foreach ($batch_group as $batch_index => $batch) {
+                $translated = $this->resolve_batch_result(
+                    $batch,
+                    $post_id,
+                    (string) $batch_index,
+                    $attempts[$batch_index] ?? new WP_Error('llm_lab_transport_error', 'LLM 并发请求没有返回结果')
+                );
+                if (is_wp_error($translated)) return $translated;
+                $results = array_merge($results, $translated);
+                $completed += count($batch);
+                if (is_callable($on_batch)) call_user_func($on_batch, $completed, $total, $batch_index + 1, count($batches));
+            }
         }
         return $results;
+    }
+
+    /** [修改时间：2026-11-20 +08:00] 首轮批次使用三路有限并发；异常批次仍走原有拆分重试。 */
+    private function request_batch_group($batch_group, $post_id) {
+        if (count($batch_group) <= 1 || !function_exists('curl_multi_init')) {
+            $results = [];
+            foreach ($batch_group as $batch_index => $batch) {
+                $results[$batch_index] = $this->request_batch($batch, $post_id, (string) $batch_index);
+            }
+            return $results;
+        }
+        $multi = curl_multi_init();
+        $handles = [];
+        $results = [];
+        foreach ($batch_group as $batch_index => $batch) {
+            $request = $this->build_request($batch, $post_id, (string) $batch_index, false);
+            if (is_wp_error($request)) {
+                $results[$batch_index] = $request;
+                continue;
+            }
+            $handle = curl_init($request['url']);
+            curl_setopt_array($handle, [
+                CURLOPT_POST => true,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_HEADER => false,
+                CURLOPT_HTTPHEADER => $request['headers'],
+                CURLOPT_POSTFIELDS => $request['body'],
+                CURLOPT_CONNECTTIMEOUT => min(20, $request['timeout']),
+                CURLOPT_TIMEOUT => $request['timeout'],
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_SSL_VERIFYHOST => 2,
+            ]);
+            curl_multi_add_handle($multi, $handle);
+            $handles[$batch_index] = $handle;
+        }
+        do {
+            $status = curl_multi_exec($multi, $running);
+            if ($running) curl_multi_select($multi, 1.0);
+        } while ($running && $status === CURLM_OK);
+        foreach ($handles as $batch_index => $handle) {
+            $body = (string) curl_multi_getcontent($handle);
+            $error = curl_error($handle);
+            $status_code = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+            $results[$batch_index] = $error !== ''
+                ? new WP_Error('llm_lab_transport_error', $error)
+                : $this->parse_response($batch_group[$batch_index], $status_code, $body);
+            curl_multi_remove_handle($multi, $handle);
+            curl_close($handle);
+        }
+        curl_multi_close($multi);
+        return $results;
+    }
+
+    private function resolve_batch_result($batch, $post_id, $batch_id, $translated, $corrective_retry = false) {
+        if (!is_wp_error($translated)) return $translated;
+        if (count($batch) === 1 && $translated->get_error_code() === 'llm_lab_language_validation' && !$corrective_retry) {
+            $this->corrective_retries++;
+            return $this->translate_batch_with_split($batch, $post_id, $batch_id . 'r', true);
+        }
+        if (count($batch) <= 1 || !in_array($translated->get_error_code(), [
+            'llm_lab_truncated', 'llm_lab_non_xml', 'llm_lab_batch_mismatch',
+            'llm_lab_restore_failed', 'llm_lab_language_validation'
+        ], true)) return $translated;
+        $this->split_retries++;
+        $middle = (int) ceil(count($batch) / 2);
+        $left = $this->translate_batch_with_split(array_slice($batch, 0, $middle), $post_id, $batch_id . 'a');
+        if (is_wp_error($left)) return $left;
+        $right = $this->translate_batch_with_split(array_slice($batch, $middle), $post_id, $batch_id . 'b');
+        return is_wp_error($right) ? $right : array_merge($left, $right);
     }
 
     public function stats() {
@@ -55,24 +133,24 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
 
     private function translate_batch_with_split($batch, $post_id, $batch_id, $corrective_retry = false) {
         $translated = $this->request_batch($batch, $post_id, $batch_id, $corrective_retry);
-        if (!is_wp_error($translated)) return $translated;
-        if (count($batch) === 1 && $translated->get_error_code() === 'llm_lab_language_validation' && !$corrective_retry) {
-            $this->corrective_retries++;
-            return $this->translate_batch_with_split($batch, $post_id, $batch_id . 'r', true);
-        }
-        if (count($batch) <= 1 || !in_array($translated->get_error_code(), [
-            'llm_lab_truncated', 'llm_lab_non_xml', 'llm_lab_batch_mismatch',
-            'llm_lab_restore_failed', 'llm_lab_language_validation'
-        ], true)) return $translated;
-        $this->split_retries++;
-        $middle = (int) ceil(count($batch) / 2);
-        $left = $this->translate_batch_with_split(array_slice($batch, 0, $middle), $post_id, $batch_id . 'a');
-        if (is_wp_error($left)) return $left;
-        $right = $this->translate_batch_with_split(array_slice($batch, $middle), $post_id, $batch_id . 'b');
-        return is_wp_error($right) ? $right : array_merge($left, $right);
+        return $this->resolve_batch_result($batch, $post_id, $batch_id, $translated, $corrective_retry);
     }
 
     private function request_batch($batch, $post_id, $batch_id, $corrective_retry = false) {
+        $request = $this->build_request($batch, $post_id, $batch_id, $corrective_retry);
+        if (is_wp_error($request)) return $request;
+        $response = wp_remote_post($request['url'], ['timeout' => $request['timeout'], 'headers' => [
+            'Authorization' => 'Bearer ' . $request['api_key'], 'Content-Type' => 'application/json'
+        ], 'body' => $request['body']]);
+        if (is_wp_error($response)) return $response;
+        return $this->parse_response(
+            $batch,
+            (int) wp_remote_retrieve_response_code($response),
+            (string) wp_remote_retrieve_body($response)
+        );
+    }
+
+    private function build_request($batch, $post_id, $batch_id, $corrective_retry = false) {
         $config = $this->config();
         if ($config['api_key'] === '') return new WP_Error('llm_lab_key_missing', 'LLM API Key 未配置');
         if ($config['api_url'] === '' || $config['model'] === '') return new WP_Error('llm_lab_config_missing', 'LLM API 地址或模型未配置');
@@ -91,12 +169,17 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         if ($config['provider'] === 'doubao') $body['thinking'] = ['type' => 'disabled'];
         if ($config['max_tokens'] > 0) $body['max_tokens'] = $config['max_tokens'];
         $this->request_count++;
-        $response = wp_remote_post($config['api_url'], ['timeout' => $config['timeout'], 'headers' => [
-            'Authorization' => 'Bearer ' . $config['api_key'], 'Content-Type' => 'application/json'
-        ], 'body' => wp_json_encode($body, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE)]);
-        if (is_wp_error($response)) return $response;
-        $status = (int) wp_remote_retrieve_response_code($response);
-        $data = json_decode((string) wp_remote_retrieve_body($response), true);
+        return [
+            'url' => $config['api_url'],
+            'api_key' => $config['api_key'],
+            'headers' => ['Authorization: Bearer ' . $config['api_key'], 'Content-Type: application/json'],
+            'body' => wp_json_encode($body, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
+            'timeout' => $config['timeout'],
+        ];
+    }
+
+    private function parse_response($batch, $status, $raw_body) {
+        $data = json_decode((string) $raw_body, true);
         if ($status < 200 || $status >= 300) return new WP_Error('llm_lab_http_error', (string) ($data['error']['message'] ?? ('HTTP ' . $status)));
         if ((string) ($data['choices'][0]['finish_reason'] ?? '') === 'length') return new WP_Error('llm_lab_truncated', 'LLM 输出被截断');
         $content = trim((string) ($data['choices'][0]['message']['content'] ?? ''));
@@ -162,6 +245,12 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
             'Wrong: <t id="x">power cord</t> s. Correct: <t id="x">power cords</t>.',
             'Wrong in running text: the <t id="x">Integrating Sphere</t> is closed. Correct: the <t id="x">integrating sphere</t> is closed.',
             'Wrong: diameter 300mm. Correct: diameter 300 mm.',
+            'For every <lisun-unit context="heading">, use consistent Title Case for the entire heading, including explanatory text inside parentheses. Keep articles, short prepositions, and conjunctions lowercase unless they are the first or last word.',
+            'Use formal technical-manual style. Do not use contractions such as we\'ll, don\'t, or it\'s. Use large/small for equipment sizes, never big.',
+            'Translate table-column 说明 as Description when it labels what an item, parameter, or step means. Use Note only for an actual note or caution outside that column-heading role.',
+            'Prefer established technical English over word-for-word calques. Examples: 浮尘 means airborne dust or dust accumulation; 手旋螺丝 means thumb screw or hand knob depending on the hardware; 螺丝手柄 means screw knob or fastener knob, not screw handle; choose the natural component name from context.',
+            'Preserve chemical formulas and render numeric chemical indices as Unicode subscripts when plain text is used, for example BaSO₄ rather than BaSO4.',
+            'Do not introduce doubled spaces or spaces before punctuation.',
         ];
         $glossary = [];
         foreach ($batch as $prepared) foreach ((array) ($prepared['occurrences'] ?? []) as $occurrence) {

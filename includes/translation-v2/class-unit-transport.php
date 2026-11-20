@@ -17,15 +17,18 @@ class Lisun_Manual_V2_Unit_Transport {
         $format_sequence = 0;
         $format_map = [];
         $occurrences = [];
-        $xml = '<lisun-unit key="' . self::xml((string) $unit['unit_key']) . '">';
+        $context = in_array((string) ($unit['unit_type'] ?? ''), ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], true)
+            || ($unit['field'] ?? '') === 'title' ? 'heading' : 'body';
+        // [修改时间：2026-11-20 +08:00] 把语境显式交给 LLM，避免模型仅凭编号猜测标题，
+        // 导致同一篇手册中 Title Case / sentence case 随机混用。
+        $xml = '<lisun-unit key="' . self::xml((string) $unit['unit_key'])
+            . '" context="' . self::xml($context) . '">';
         $last_was_term = false;
         // Circled/parenthesized list numbers are visual content, not numbers
         // for DeepL to normalize. Keep them as opaque placeholders so ⑩ can
         // never come back as (10), 10., or another numbering style.
         $sequence_marker_pattern = '/([\x{2460}-\x{2473}\x{2474}-\x{2487}\x{24EA}])/u';
         $single_sequence_marker_pattern = '/^[\x{2460}-\x{2473}\x{2474}-\x{2487}\x{24EA}]$/u';
-        $context = in_array((string) ($unit['unit_type'] ?? ''), ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], true)
-            || ($unit['field'] ?? '') === 'title' ? 'heading' : 'body';
         $visible_prefix = '';
 
         $skip_until = -1;
