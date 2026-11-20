@@ -87,11 +87,25 @@ class Lisun_Manual_V2_Materializer {
             $term_id = (string) ($occurrence['term_id'] ?? '');
             // Deleted/missing terms freeze their last known English; they never
             // remove surrounding text or an entire historical occurrence.
+            $stored_text = (string) ($occurrence['translated_text'] ?? '');
             $text = $mode === self::MODE_CURRENT_GLOSSARY && isset($glossary_by_id[$term_id])
                 ? (string) ($glossary_by_id[$term_id]['en'] ?? '')
-                : (string) ($occurrence['translated_text'] ?? '');
+                : $stored_text;
             $context = (string) ($target_case_contexts[$id]
                 ?? $occurrence['case_context'] ?? 'body');
+            // [修改时间：2026-11-20 13:31:00 +08:00]
+            // Reuse the LLM snapshot's grammatical casing when a glossary is
+            // applied later. This keeps common equipment names lowercase in
+            // running prose without lowercasing acronyms, model names, or
+            // mixed-case brands such as LED and iPhone.
+            if ($mode === self::MODE_CURRENT_GLOSSARY
+                && $context === 'body'
+                && preg_match('/^\s*[a-z]/', $stored_text)) {
+                $lowered = preg_replace_callback('/\b[A-Z][a-z]+\b/', static function ($word) {
+                    return strtolower((string) $word[0]);
+                }, $text);
+                if (is_string($lowered)) $text = $lowered;
+            }
             $text = Lisun_Manual_V2_Term_Matcher::apply_case($text, $context);
             $slot = count($rendered_terms);
             $rendered_terms[$slot] = htmlspecialchars($text, ENT_NOQUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');

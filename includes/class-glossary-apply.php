@@ -2447,6 +2447,11 @@ class Lisun_Manual_Glossary_Apply {
 
     /** Return active units whose local term slot does not contain the term. */
     private static function invalid_term_units($active, $term_id, $glossary, $source_key = '') {
+        $glossary_by_id = [];
+        foreach ((array) $glossary as $term) {
+            $id = (string) ($term['term_id'] ?? '');
+            if ($id !== '') $glossary_by_id[$id] = $term;
+        }
         $by_unit = [];
         foreach ((array) ($active['occurrences'] ?? []) as $occurrence) {
             $key = (string) ($occurrence['unit_key'] ?? '');
@@ -2457,6 +2462,36 @@ class Lisun_Manual_Glossary_Apply {
             if ((string) ($unit['status'] ?? '') === 'degraded') continue;
             $key = (string) ($unit['unit_key'] ?? '');
             $unit['occurrences'] = $by_unit[$key] ?? [];
+            // [修改时间：2026-11-20 13:18:00 +08:00]
+            // A suffix stored outside a stable term slot is safe only while
+            // the glossary base wording is unchanged.  Applying an old "es"
+            // to a new target such as "device" would create "devicees".
+            // Route only that affected unit through incremental translation
+            // so the provider can choose the new word form in context.
+            foreach ((array) $unit['occurrences'] as $occurrence) {
+                $occurrence_term_id = (string) ($occurrence['term_id'] ?? '');
+                if ($occurrence_term_id !== (string) $term_id
+                    && ($source_key === '' || self::normalize_source_key($occurrence['source_text'] ?? '') !== $source_key)) {
+                    continue;
+                }
+                $occurrence_id = (string) ($occurrence['occurrence_id'] ?? '');
+                $marker = '{{LISUN_TERM:' . $occurrence_id . '}}';
+                if ($occurrence_id === '' || !preg_match(
+                    '/' . preg_quote($marker, '/') . '\s*(?:s|es|ed|ing)\b/i',
+                    (string) ($unit['target_template'] ?? '')
+                )) {
+                    continue;
+                }
+                $lookup_term_id = isset($glossary_by_id[$occurrence_term_id])
+                    ? $occurrence_term_id
+                    : (string) $term_id;
+                $current_target = trim((string) ($glossary_by_id[$lookup_term_id]['en'] ?? ''));
+                $stored_target = trim((string) ($occurrence['translated_text'] ?? ''));
+                if ($current_target !== '' && strcasecmp($current_target, $stored_target) !== 0) {
+                    $invalid[$key] = true;
+                    continue 2;
+                }
+            }
             $analysis = Lisun_Manual_V2_Term_Boundary::analyze_unit($unit, $glossary);
             if (empty($analysis['retranslation_required'])) continue;
             foreach ((array) $unit['occurrences'] as $occurrence) {
