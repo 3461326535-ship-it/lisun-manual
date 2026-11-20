@@ -4897,6 +4897,13 @@ class Lisun_Manual_Translate {
 
     /** Engines that have a V2 unit adapter (professional MT, no prompt building). */
     private static function v2_capable_provider() {
+        // [修改时间：2026-11-20 +08:00] LLM 主引擎实验复用完整的 V2 单元管线。
+        // 先判断实验适配器，否则选择豆包/DeepSeek 等 LLM 时会被错误地送回旧版
+        // 逐段 V1 路径，导致批量 XML、术语锚点恢复和快速失败全部失效。
+        if ((bool) get_option('lisun_llm_lab_enabled', false)
+            && class_exists('Lisun_Manual_V2_LLM_Lab_Adapter')) {
+            return true;
+        }
         $provider = (string) get_option('lisun_llm_provider', 'deepseek');
         if ($provider === 'deepl') return true;
         return $provider === 'google' && class_exists('Lisun_Manual_V2_Google_Adapter');
