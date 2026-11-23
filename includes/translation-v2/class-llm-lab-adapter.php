@@ -11,9 +11,12 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
     private $max_batch_units = 10;
     private $max_batch_xml_chars = 14000;
     private $concurrency = 3;
+    private $config_override = [];
 
-    public function __construct($terms = null) {
+    /** [修改时间：2026-11-23 +08:00] 允许隔离测试显式指定提供商，避免改写线上全局设置。 */
+    public function __construct($terms = null, $config_override = []) {
         $this->terms = is_array($terms) ? array_values($terms) : [];
+        $this->config_override = is_array($config_override) ? $config_override : [];
     }
 
     public function translate($prepared_units, $post_id = 0, $on_batch = null) {
@@ -262,15 +265,20 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
     }
 
     private function config() {
-        $provider = (string) get_option('lisun_llm_lab_provider', 'deepseek');
+        $provider = (string) ($this->config_override['provider'] ?? get_option('lisun_llm_lab_provider', 'deepseek'));
         $urls = ['deepseek' => 'https://api.deepseek.com/chat/completions', 'doubao' => 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', 'openai' => 'https://api.openai.com/v1/chat/completions', 'openrouter' => 'https://openrouter.ai/api/v1/chat/completions', 'gemini' => 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'];
-        $models = ['deepseek' => 'deepseek-chat', 'doubao' => (string) get_option('lisun_doubao_model', 'Doubao-Seed-2.1-pro'), 'openai' => 'gpt-4o', 'openrouter' => 'openrouter/auto', 'gemini' => 'gemini-3.6-flash'];
-        $api_url = trim((string) get_option('lisun_llm_lab_api_url', ''));
+        $models = ['deepseek' => 'deepseek-chat', 'doubao' => (string) get_option('lisun_doubao_model', 'Doubao-Seed-2.1-pro'), 'openai' => 'gpt-4o', 'openrouter' => 'openrouter/auto', 'gemini' => 'gemini-3.8-flash'];
+        $api_url = trim((string) ($this->config_override['api_url'] ?? get_option('lisun_llm_lab_api_url', '')));
         if ($api_url === '') $api_url = $urls[$provider] ?? $urls['deepseek'];
         $endpoint = '';
         if ($provider === 'doubao') { $endpoint = trim((string) get_option('lisun_doubao_endpoint', '')); $api_url = $urls['doubao']; }
-        $api_key = class_exists('Lisun_Manual_Provider_Config') ? Lisun_Manual_Provider_Config::api_key($provider) : '';
+        $api_key = trim((string) ($this->config_override['api_key'] ?? ''));
+        if ($api_key === '' && class_exists('Lisun_Manual_Provider_Config')) $api_key = Lisun_Manual_Provider_Config::api_key($provider);
         if ($api_key === '') $api_key = trim((string) get_option('lisun_llm_lab_api_key', ''));
-        return ['provider' => $provider, 'api_url' => $api_url, 'api_key' => $api_key, 'model' => $provider === 'doubao' && $endpoint !== '' ? $endpoint : trim((string) get_option('lisun_llm_lab_model', $models[$provider] ?? '')), 'temperature' => (float) get_option('lisun_llm_lab_temperature', 0), 'max_tokens' => max(0, (int) get_option('lisun_llm_lab_max_tokens', 8192)), 'timeout' => max(30, (int) get_option('lisun_llm_lab_timeout', 180))];
+        $model = trim((string) ($this->config_override['model'] ?? ''));
+        if ($model === '') $model = $provider === 'doubao' && $endpoint !== ''
+            ? $endpoint
+            : trim((string) get_option('lisun_llm_lab_model', $models[$provider] ?? ''));
+        return ['provider' => $provider, 'api_url' => $api_url, 'api_key' => $api_key, 'model' => $model, 'temperature' => (float) ($this->config_override['temperature'] ?? get_option('lisun_llm_lab_temperature', 0)), 'max_tokens' => max(0, (int) ($this->config_override['max_tokens'] ?? get_option('lisun_llm_lab_max_tokens', 8192))), 'timeout' => max(30, (int) ($this->config_override['timeout'] ?? get_option('lisun_llm_lab_timeout', 180)))];
     }
 }

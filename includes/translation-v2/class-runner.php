@@ -828,7 +828,7 @@ class Lisun_Manual_V2_Runner {
         return (bool) preg_match('/[A-Za-z]{2,}/', $text);
     }
 
-    public static function translate_document($post_id, $content, $title, $force = false, $force_unit_keys = []) {
+    public static function translate_document($post_id, $content, $title, $force = false, $force_unit_keys = [], $runtime = []) {
         Lisun_Manual_V2_Schema::maybe_upgrade();
         self::progress($post_id, 'extracting', 8, '正在提取翻译单元…');
         $content_document = Lisun_Manual_V2_Unit_Extractor::extract(
@@ -855,8 +855,12 @@ class Lisun_Manual_V2_Runner {
                 . ' transport=' . (string) ($active['revision']['transport_version'] ?? 'legacy')
                 . ' action=full_retranslate');
         }
-        $current_terms = Lisun_Manual_Glossary::is_enabled() ? Lisun_Manual_Glossary::terms_for_post($post_id) : [];
-        if (Lisun_Manual_Glossary::is_enabled()) {
+        // [修改时间：2026-11-23 +08:00] 对比任务可注入同一份术语和适配器，不切换全局引擎。
+        $has_runtime_terms = array_key_exists('terms', (array) $runtime);
+        $current_terms = $has_runtime_terms
+            ? array_values((array) $runtime['terms'])
+            : (Lisun_Manual_Glossary::is_enabled() ? Lisun_Manual_Glossary::terms_for_post($post_id) : []);
+        if (Lisun_Manual_Glossary::is_enabled() && !$has_runtime_terms) {
             // “仅本次翻译使用”的临时选择已物化到 $current_terms，消费一次后清除，
             // 下次翻译若无新的临时选择则回落到本篇默认配置。
             Lisun_Manual_Glossary::clear_post_term_override($post_id);
@@ -884,7 +888,9 @@ class Lisun_Manual_V2_Runner {
             . ' recovery_keys=' . wp_json_encode((array) ($plan['recovery_unit_keys'] ?? []))
             . ' force=' . ($force ? 'yes' : 'no'));
 
-        $adapter = self::make_translation_adapter($current_terms);
+        $adapter = isset($runtime['adapter']) && is_object($runtime['adapter'])
+            ? $runtime['adapter']
+            : self::make_translation_adapter($current_terms);
 
         // [修改时间：2026-11-16 16:55:00 +08:00]
         // 对应 bug「中文说明书里本来就是英文的内容，翻成英文时不要改动」。
