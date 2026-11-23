@@ -54,6 +54,26 @@ class Lisun_Manual_V2_LLM_Review {
             $b = $priority[(string) ($right['status'] ?? 'suggest')] ?? 2;
             return $a === $b ? ((int) $left['_source_order'] <=> (int) $right['_source_order']) : ($a <=> $b);
         });
+        $proof_pending = $pending;
+        usort($proof_pending, static function ($left, $right) {
+            return (int) ($left['_source_order'] ?? 0) <=> (int) ($right['_source_order'] ?? 0);
+        });
+        $proof_items = [];
+        $proof_html = '';
+        foreach ($proof_pending as $item) {
+            $key = (string) ($item['unit_key'] ?? '');
+            $current = self::operator_text((string) ($item['current'] ?? ''));
+            $proof_items[] = [
+                'key' => $key,
+                'current' => $current,
+                'suggestion' => self::operator_text((string) ($item['suggestion'] ?? '')),
+                'status' => (string) ($item['status'] ?? 'suggest'),
+                'order' => (int) ($item['_source_order'] ?? 0),
+            ];
+            $proof_html .= '<div class="lisun-proof-unit"><div class="lisun-proof-number">'
+                . (int) ($item['_source_order'] ?? 0) . '</div><p data-review-key="'
+                . esc_attr($key) . '">' . esc_html($current) . '</p></div>';
+        }
         ?>
         <div id="lisun-review" data-post-id="<?php echo (int) $post->ID; ?>">
             <p>
@@ -62,6 +82,14 @@ class Lisun_Manual_V2_LLM_Review {
                     <?php echo $items ? esc_html('上次审核：' . (string) ($review['updated_at'] ?? '') . '；待处理 ' . count($pending) . '（阻断 ' . $counts['block'] . '），通过 ' . $counts['pass'] . '，已处理 ' . count($handled)) : '尚未审核'; ?>
                 </span>
             </p>
+            <?php if ($pending): ?><div class="lisun-review-workspace">
+                <div class="lisun-review-proof-pane">
+                    <div class="lisun-review-pane-title">英文校对稿 <span>点击高亮查看批注</span></div>
+                    <textarea id="lisun-review-proof"><?php echo esc_textarea($proof_html); ?></textarea>
+                </div>
+                <div class="lisun-review-comments-pane">
+                    <div class="lisun-review-pane-title">审核批注 <span>阻断项优先</span></div>
+            <?php endif; ?>
             <div id="lisun-review-list">
                 <?php foreach ($pending as $item) self::render_item($item, (int) $item['_source_order'] - 1); ?>
                 <?php if ($handled): ?>
@@ -71,6 +99,7 @@ class Lisun_Manual_V2_LLM_Review {
                     </details>
                 <?php endif; ?>
             </div>
+            <?php if ($pending): ?></div></div><?php endif; ?>
         </div>
         <style>
             .lisun-review-card{border:1px solid #dcdcde;border-left:4px solid #72aee6;background:#fff;margin:10px 0;padding:12px 14px}
@@ -79,12 +108,86 @@ class Lisun_Manual_V2_LLM_Review {
             .lisun-review-suggestion{background:#fff8e5}.lisun-review-reason{margin:7px 0}.lisun-review-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
             .lisun-review-discuss{display:none;margin-top:8px}.lisun-review-discuss textarea{width:100%;min-height:64px}
             .lisun-review-history{margin-top:14px;border-top:1px solid #dcdcde;padding-top:10px}.lisun-review-history>summary{cursor:pointer;font-weight:600;color:#50575e}
+            .lisun-review-workspace{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(360px,1fr);gap:14px;align-items:start}
+            .lisun-review-proof-pane,.lisun-review-comments-pane{min-width:0}.lisun-review-comments-pane{max-height:680px;overflow:auto;padding-right:3px}
+            .lisun-review-pane-title{font-weight:600;margin:0 0 7px;color:#1d2327}.lisun-review-pane-title span{font-weight:400;color:#646970;margin-left:8px}
+            .lisun-review-card.is-active{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1;background:#f0f6fc}
+            @media(max-width:1100px){.lisun-review-workspace{grid-template-columns:1fr}.lisun-review-comments-pane{max-height:none}}
         </style>
         <script>
         jQuery(function($){
             var $root=$('#lisun-review'); if(!$root.length)return;
             var id=$root.data('post-id'), base='<?php echo esc_js(rest_url('lisun-manual/v1')); ?>', nonce='<?php echo esc_js(wp_create_nonce('wp_rest')); ?>';
+            var proofItems=<?php echo wp_json_encode($proof_items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>, proofEditor=null;
             function post(path,data){data.post_id=id;return $.ajax({url:base+path,method:'POST',contentType:'application/json',data:JSON.stringify(data),beforeSend:function(x){x.setRequestHeader('X-WP-Nonce',nonce);}})}
+            function activateCard(key){
+                var $card=$root.find('.lisun-review-card').removeClass('is-active').filter(function(){return String($(this).data('key'))===String(key)}).first().addClass('is-active');
+                if($card.length)$card[0].scrollIntoView({block:'nearest',behavior:'smooth'});
+            }
+            function diffRange(current,suggestion){
+                current=String(current||'');suggestion=String(suggestion||'');
+                var start=0,max=Math.min(current.length,suggestion.length);
+                while(start<max&&current.charAt(start)===suggestion.charAt(start))start++;
+                var a=current.length-1,b=suggestion.length-1;
+                while(a>=start&&b>=start&&current.charAt(a)===suggestion.charAt(b)){a--;b--;}
+                var end=a+1,isWord=function(ch){return /[A-Za-z0-9]/.test(ch||'');};
+                while(start>0&&isWord(current.charAt(start-1))&&isWord(current.charAt(start)))start--;
+                while(end<current.length&&isWord(current.charAt(end-1))&&isWord(current.charAt(end)))end++;
+                if(end<=start){start=Math.max(0,Math.min(start,current.length-1));end=Math.min(current.length,start+1);}
+                return {start:start,end:end};
+            }
+            function domRangeForOffsets(editor,node,start,end){
+                var doc=editor.getDoc(),walker=doc.createTreeWalker(node,NodeFilter.SHOW_TEXT,null,false),range=doc.createRange(),pos=0,n,startSet=false;
+                while((n=walker.nextNode())){
+                    var next=pos+n.nodeValue.length;
+                    if(!startSet&&start<=next){range.setStart(n,Math.max(0,start-pos));startSet=true;}
+                    if(startSet&&end<=next){range.setEnd(n,Math.max(0,end-pos));return range;}
+                    pos=next;
+                }
+                return null;
+            }
+            function initProof(){
+                if(!proofItems.length||!window.tinymce||!document.getElementById('lisun-review-proof'))return;
+                tinymce.init({
+                    selector:'#lisun-review-proof',menubar:false,toolbar:false,statusbar:false,readonly:1,height:620,resize:false,
+                    content_style:'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;line-height:1.65;padding:14px 18px;color:#1d2327}.lisun-proof-unit{display:grid;grid-template-columns:38px 1fr;border-bottom:1px solid #e2e4e7;padding:8px 0}.lisun-proof-number{color:#8c8f94;font-size:12px;padding-top:3px}.lisun-proof-unit p{margin:0}.mce-annotation{border-radius:2px;padding:1px 0;cursor:pointer}.mce-annotation[data-review-status="block"]{background:#ffd7d7;border-bottom:2px solid #d63638}.mce-annotation[data-review-status="suggest"]{background:#fff0b3;border-bottom:2px solid #dba617}.mce-annotation.lisun-active{outline:2px solid #2271b1;outline-offset:1px}',
+                    setup:function(editor){
+                        editor.on('init',function(){
+                            if(!editor.annotator){return;}
+                            proofEditor=editor;
+                            editor.annotator.register('lisun-review',{persistent:false,decorate:function(uid,data){return{attributes:{'data-review-key':data.key,'data-review-status':data.status,'title':'点击查看审核批注'}};}});
+                            editor.annotator.annotationChanged('lisun-review',function(state,name,obj){
+                                $(editor.getBody()).find('.mce-annotation').removeClass('lisun-active');
+                                if(state&&obj){$(obj.nodes).addClass('lisun-active');activateCard(obj.uid);}
+                            });
+                            proofItems.forEach(function(item){
+                                var node=editor.getBody().querySelector('[data-review-key="'+String(item.key).replace(/"/g,'\\"')+'"]');
+                                if(!node)return;
+                                var changed=item.suggestion&&item.current!==item.suggestion
+                                    ? diffRange(item.current,item.suggestion)
+                                    : {start:0,end:item.current.length};
+                                var range=domRangeForOffsets(editor,node,changed.start,changed.end);
+                                if(!range)return;
+                                editor.selection.setRng(range);
+                                editor.annotator.annotate('lisun-review',{uid:item.key,key:item.key,status:item.status});
+                            });
+                            editor.selection.collapse(true);
+                        });
+                    }
+                });
+            }
+            initProof();
+            $root.on('click','.lisun-review-card',function(event){
+                if($(event.target).is('button,textarea,a,input,select,label')||$(event.target).closest('button,textarea,a,input,select,label').length)return;
+                var key=String($(this).data('key')||'');activateCard(key);
+                if(!proofEditor||!proofEditor.annotator)return;
+                var all=proofEditor.annotator.getAll('lisun-review'),nodes=all&&all[key];
+                if(!nodes||!nodes.length)return;
+                $(proofEditor.getBody()).find('.mce-annotation').removeClass('lisun-active');
+                $(nodes).addClass('lisun-active');
+                nodes[0].scrollIntoView({block:'center',behavior:'smooth'});
+                proofEditor.selection.select(nodes[0]);
+            });
             $('#lisun-review-run').on('click',function(){
                 var $b=$(this).prop('disabled',true),cursor=0,$status=$('#lisun-review-status');
                 function next(){
