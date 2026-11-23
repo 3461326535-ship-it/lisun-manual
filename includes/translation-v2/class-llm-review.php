@@ -38,21 +38,37 @@ class Lisun_Manual_V2_LLM_Review {
         if (get_post_meta($post->ID, '_lisun_manual_lang', true) === 'en') return;
         $review = self::load($post->ID);
         $items = array_values((array) ($review['items'] ?? []));
-        $counts = ['pass' => 0, 'suggest' => 0, 'block' => 0, 'accepted' => 0, 'rejected' => 0];
-        foreach ($items as $item) {
+        $counts = ['pass' => 0, 'suggest' => 0, 'block' => 0, 'accepted' => 0, 'rejected' => 0, 'undone' => 0];
+        $pending = []; $handled = [];
+        foreach ($items as $index => $item) {
+            $item['_source_order'] = $index + 1;
             $state = (string) ($item['decision'] ?? $item['status'] ?? 'pass');
             if (isset($counts[$state])) $counts[$state]++;
+            if (!empty($item['decision'])) $handled[] = $item;
+            elseif ((string) ($item['status'] ?? 'pass') !== 'pass') $pending[] = $item;
         }
+        usort($pending, static function ($left, $right) {
+            $priority = ['block' => 0, 'suggest' => 1];
+            $a = $priority[(string) ($left['status'] ?? 'suggest')] ?? 2;
+            $b = $priority[(string) ($right['status'] ?? 'suggest')] ?? 2;
+            return $a === $b ? ((int) $left['_source_order'] <=> (int) $right['_source_order']) : ($a <=> $b);
+        });
         ?>
         <div id="lisun-review" data-post-id="<?php echo (int) $post->ID; ?>">
             <p>
                 <button type="button" class="button button-primary" id="lisun-review-run">开始 AI 审核</button>
                 <span id="lisun-review-status" style="margin-left:8px;color:#646970;">
-                    <?php echo $items ? esc_html('上次审核：' . (string) ($review['updated_at'] ?? '') . '；建议 ' . $counts['suggest'] . '，阻断 ' . $counts['block'] . '，已接受 ' . $counts['accepted']) : '尚未审核'; ?>
+                    <?php echo $items ? esc_html('上次审核：' . (string) ($review['updated_at'] ?? '') . '；待处理 ' . count($pending) . '（阻断 ' . $counts['block'] . '），通过 ' . $counts['pass'] . '，已处理 ' . count($handled)) : '尚未审核'; ?>
                 </span>
             </p>
             <div id="lisun-review-list">
-                <?php foreach ($items as $index => $item) self::render_item($item, $index); ?>
+                <?php foreach ($pending as $item) self::render_item($item, (int) $item['_source_order'] - 1); ?>
+                <?php if ($handled): ?>
+                    <details class="lisun-review-history">
+                        <summary>处理记录（<?php echo count($handled); ?>）</summary>
+                        <?php foreach ($handled as $item) self::render_item($item, (int) $item['_source_order'] - 1); ?>
+                    </details>
+                <?php endif; ?>
             </div>
         </div>
         <style>
@@ -61,6 +77,7 @@ class Lisun_Manual_V2_LLM_Review {
             .lisun-review-card.is-decided{opacity:.72}.lisun-review-source{color:#50575e}.lisun-review-target,.lisun-review-suggestion{white-space:pre-wrap;background:#f6f7f7;padding:8px;margin:6px 0}
             .lisun-review-suggestion{background:#fff8e5}.lisun-review-reason{margin:7px 0}.lisun-review-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
             .lisun-review-discuss{display:none;margin-top:8px}.lisun-review-discuss textarea{width:100%;min-height:64px}
+            .lisun-review-history{margin-top:14px;border-top:1px solid #dcdcde;padding-top:10px}.lisun-review-history>summary{cursor:pointer;font-weight:600;color:#50575e}
         </style>
         <script>
         jQuery(function($){
