@@ -174,7 +174,11 @@ class Lisun_Manual_V2_LLM_Review {
             <?php endif; ?>
         </div>
         <style>
-            #lisun-annotation-review .lisun-annotation-toolbar{display:flex;align-items:center;justify-content:space-between;gap:5px;margin:10px 0 8px}
+            /* 2026-11-23: Keep the English review controls in view while the operator follows highlights down the editor. */
+            #lisun-manual-llm-review-annotations{position:sticky;top:42px;z-index:30;max-height:calc(100vh - 54px);overflow:auto;box-shadow:0 2px 10px rgba(0,0,0,.08)}
+            #lisun-manual-llm-review-annotations .postbox-header{position:sticky;top:0;z-index:3;background:#fff}
+            #lisun-manual-llm-review-annotations .inside{margin-bottom:0}
+            #lisun-annotation-review .lisun-annotation-toolbar{position:sticky;top:39px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:5px;margin:10px -2px 8px;padding:7px 2px;background:#fff;border-bottom:1px solid #f0f0f1}
             #lisun-annotation-review .lisun-annotation-filter{display:block;margin:0 0 8px}
             #lisun-annotation-review .lisun-annotation-card{display:none}
             #lisun-annotation-review .lisun-annotation-card.is-active{display:block}
@@ -187,11 +191,14 @@ class Lisun_Manual_V2_LLM_Review {
             #lisun-annotation-review .lisun-review-actions{display:flex;gap:5px;flex-wrap:wrap}
             #lisun-annotation-review .lisun-review-discuss{display:none;margin-top:8px}
             #lisun-annotation-review .lisun-review-discuss textarea{width:100%;min-height:72px}
+            @media(max-width:850px){#lisun-manual-llm-review-annotations{position:static;max-height:none;overflow:visible;box-shadow:none}#lisun-manual-llm-review-annotations .postbox-header,#lisun-annotation-review .lisun-annotation-toolbar{position:static}}
         </style>
         <?php if ($pending): ?>
         <script>
         jQuery(function($){
             var $root=$('#lisun-annotation-review'); if(!$root.length)return;
+            var $box=$('#lisun-manual-llm-review-annotations'),$side=$('#side-sortables');
+            if($box.length&&$side.length&&$side.children().first()[0]!==$box[0])$box.prependTo($side);
             var sourceId=$root.data('source-id'),items=<?php echo wp_json_encode($annotation_items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
             var base='<?php echo esc_js(rest_url('lisun-manual/v1')); ?>',nonce='<?php echo esc_js(wp_create_nonce('wp_rest')); ?>',editor=null,visible=[],position=0,matched={};
             function post(path,data){data.post_id=sourceId;return $.ajax({url:base+path,method:'POST',contentType:'application/json',data:JSON.stringify(data),beforeSend:function(x){x.setRequestHeader('X-WP-Nonce',nonce);}})}
