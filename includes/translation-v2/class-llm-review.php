@@ -103,11 +103,25 @@ class Lisun_Manual_V2_LLM_Review {
         $post_id = (int) $request->get_param('post_id');
         $snapshot = Lisun_Manual_V2_Repository::get_active_snapshot($post_id);
         if (!$snapshot) return new WP_Error('review_no_revision', '没有可审核的 V2 翻译版本', ['status' => 409]);
+        $occurrences = [];
+        foreach ((array) $snapshot['occurrences'] as $occurrence) {
+            $occurrences[(string) ($occurrence['unit_key'] ?? '')][] = $occurrence;
+        }
+        $units = (array) $snapshot['units'];
+        foreach ($units as &$unit) $unit['occurrences'] = $occurrences[(string) ($unit['unit_key'] ?? '')] ?? [];
+        unset($unit);
         $items = [];
-        foreach (array_chunk((array) $snapshot['units'], 8) as $batch) {
-            $result = self::review_batch($batch);
-            if (is_wp_error($result)) return $result;
-            $items = array_merge($items, $result);
+        $batches = array_chunk($units, 12);
+        foreach (array_chunk($batches, 3) as $group) {
+            $prompts = array_map([__CLASS__, 'review_prompt'], $group);
+            $responses = self::call_model_group($prompts);
+            foreach ($group as $offset => $batch) {
+                $data = $responses[$offset] ?? new WP_Error('review_transport_missing', '审核批次没有返回结果');
+                if (is_wp_error($data)) return $data;
+                $result = self::review_batch($batch, $data);
+                if (is_wp_error($result)) return $result;
+                $items = array_merge($items, $result);
+            }
         }
         $record = [
             'revision_id' => (int) $snapshot['revision']['id'],
@@ -133,14 +147,15 @@ class Lisun_Manual_V2_LLM_Review {
             return rest_ensure_response(['success' => true, 'decision' => 'rejected']);
         }
         if ($action !== 'accept') return new WP_Error('review_bad_action', '未知操作', ['status' => 400]);
-        $suggestion = (string) ($review['items'][$index]['suggestion'] ?? '');
+        $suggestion = (string) ($review['items'][$index]['suggestion_template'] ?? $review['items'][$index]['suggestion'] ?? '');
         if ($suggestion === '') return new WP_Error('review_empty_suggestion', '该审核项没有可接受的建议', ['status' => 409]);
         $accepted = self::accept_suggestion($post_id, $key, $suggestion);
         if (is_wp_error($accepted)) return $accepted;
         $review['revision_id'] = (int) $accepted['revision_id'];
         $review['items'][$index]['decision'] = 'accepted';
         $review['items'][$index]['decided_at'] = current_time('mysql');
-        $review['items'][$index]['current'] = $suggestion;
+        $review['items'][$index]['current_template'] = $suggestion;
+        $review['items'][$index]['current'] = (string) ($review['items'][$index]['suggestion'] ?? $suggestion);
         update_post_meta($post_id, self::META_KEY, $review);
         return rest_ensure_response($accepted);
     }
@@ -156,7 +171,8 @@ class Lisun_Manual_V2_LLM_Review {
         $item = $review['items'][$index];
         $reply = self::discuss_item($item, $message);
         if (is_wp_error($reply)) return $reply;
-        $item['suggestion'] = (string) $reply['suggestion'];
+        $item['suggestion_template'] = (string) $reply['suggestion'];
+        $item['suggestion'] = self::readable_template((string) $reply['suggestion'], (array) ($item['term_slots'] ?? []));
         $item['reason'] = (string) $reply['reason'];
         $item['status'] = 'suggest';
         $item['discussion'][] = ['time' => current_time('mysql'), 'user' => $message, 'model' => $item['reason']];
@@ -166,19 +182,29 @@ class Lisun_Manual_V2_LLM_Review {
         return rest_ensure_response($item);
     }
 
-    private static function review_batch($units) {
+    public static function review_prompt($units) {
         $payload = [];
         foreach ($units as $unit) {
+            $slots = self::slot_map((array) ($unit['occurrences'] ?? []));
             $payload[] = [
                 'unit_key' => (string) $unit['unit_key'],
                 'context' => (string) ($unit['unit_type'] ?? 'text'),
                 'source' => (string) ($unit['source_text'] ?? ''),
                 'translation' => (string) ($unit['target_template'] ?? ''),
+                'term_slots' => $slots,
             ];
         }
-        $prompt = "Review each Chinese-to-English technical-manual translation. Check terminology, untranslated Chinese, grammar, naturalness, formal manual register, heading capitalization, and spacing between numbers and SI units. Do not fact-check. Preserve every HTML tag and every {{LISUN_TERM:...}} marker exactly in any suggestion. Return strict JSON only: {\"items\":[{\"unit_key\":\"...\",\"status\":\"pass|suggest|block\",\"category\":\"terminology|language|style|format\",\"confidence\":0.0,\"reason\":\"concise Chinese reason\",\"suggestion\":\"complete corrected translation or empty\"}]}. Include every input key once.\n\n" . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $data = self::call_model($prompt);
-        if (is_wp_error($data)) return $data;
+        return "Review each Chinese-to-English technical-manual translation. Check terminology, untranslated Chinese, grammar, naturalness, formal manual register, heading capitalization, and spacing between numbers and SI units. Do not fact-check. Each {{LISUN_TERM:...}} marker already renders as the visible English term listed in term_slots: never repeat that term before or after its marker. Preserve every HTML tag and every marker exactly in any suggestion. Do not demand Title Case for ordinary td table data; use it only for actual headings or column headers. Ignore differences consisting only of leading/trailing whitespace. Mark pass when the current wording is already acceptable; do not invent a suggestion identical to the current translation. If grammar around a fixed term marker is awkward, rewrite the sentence around it rather than adding a suffix outside the marker. Return strict JSON only: {\"items\":[{\"unit_key\":\"...\",\"status\":\"pass|suggest|block\",\"category\":\"terminology|language|style|format\",\"confidence\":0.0,\"reason\":\"concise Chinese reason\",\"suggestion\":\"complete corrected translation template or empty\"}]}. Include every input key once.\n\n" . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    private static function review_batch($units, $data) {
+        $payload = [];
+        foreach ($units as $unit) {
+            $payload[] = [
+                'unit_key' => (string) $unit['unit_key'], 'source' => (string) ($unit['source_text'] ?? ''),
+                'translation' => (string) ($unit['target_template'] ?? ''), 'term_slots' => self::slot_map((array) ($unit['occurrences'] ?? [])),
+            ];
+        }
         $returned = [];
         foreach ((array) ($data['items'] ?? []) as $item) $returned[(string) ($item['unit_key'] ?? '')] = $item;
         $result = [];
@@ -186,6 +212,9 @@ class Lisun_Manual_V2_LLM_Review {
             $item = (array) ($returned[$source['unit_key']] ?? []);
             $status = in_array(($item['status'] ?? ''), ['pass', 'suggest', 'block'], true) ? $item['status'] : 'block';
             $suggestion = trim((string) ($item['suggestion'] ?? ''));
+            if ($status !== 'pass' && self::substantive_text($source['translation']) === self::substantive_text($suggestion)) {
+                $status = 'pass'; $suggestion = ''; $item['reason'] = '';
+            }
             if ($status !== 'pass') {
                 $valid = self::validate_template($source['translation'], $suggestion);
                 if (is_wp_error($valid)) {
@@ -194,10 +223,13 @@ class Lisun_Manual_V2_LLM_Review {
                 }
             }
             $result[] = [
-                'unit_key' => $source['unit_key'], 'source' => $source['source'], 'current' => $source['translation'],
+                'unit_key' => $source['unit_key'], 'source' => $source['source'],
+                'current_template' => $source['translation'], 'current' => self::readable_template($source['translation'], $source['term_slots']),
                 'status' => $status, 'category' => sanitize_key((string) ($item['category'] ?? 'language')),
                 'confidence' => max(0, min(1, (float) ($item['confidence'] ?? 0))),
-                'reason' => sanitize_textarea_field((string) ($item['reason'] ?? '')), 'suggestion' => $suggestion,
+                'reason' => sanitize_textarea_field((string) ($item['reason'] ?? '')),
+                'suggestion_template' => $suggestion, 'suggestion' => self::readable_template($suggestion, $source['term_slots']),
+                'term_slots' => $source['term_slots'],
                 'discussion' => [],
             ];
         }
@@ -206,13 +238,13 @@ class Lisun_Manual_V2_LLM_Review {
 
     private static function discuss_item($item, $message) {
         $prompt = "Revise one technical-manual translation suggestion based on the operator's feedback. Preserve every HTML tag and every {{LISUN_TERM:...}} marker exactly. Return strict JSON only: {\"suggestion\":\"complete corrected translation\",\"reason\":\"concise Chinese explanation\"}.\n\n" . wp_json_encode([
-            'source' => $item['source'] ?? '', 'current' => $item['current'] ?? '', 'previous_suggestion' => $item['suggestion'] ?? '',
+            'source' => $item['source'] ?? '', 'current' => $item['current_template'] ?? $item['current'] ?? '', 'previous_suggestion' => $item['suggestion_template'] ?? $item['suggestion'] ?? '',
             'previous_reason' => $item['reason'] ?? '', 'operator_feedback' => $message,
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $data = self::call_model($prompt);
         if (is_wp_error($data)) return $data;
         $suggestion = trim((string) ($data['suggestion'] ?? ''));
-        $valid = self::validate_template((string) ($item['current'] ?? ''), $suggestion);
+        $valid = self::validate_template((string) ($item['current_template'] ?? $item['current'] ?? ''), $suggestion);
         if (is_wp_error($valid)) return $valid;
         return ['suggestion' => $suggestion, 'reason' => sanitize_textarea_field((string) ($data['reason'] ?? ''))];
     }
@@ -254,23 +286,84 @@ class Lisun_Manual_V2_LLM_Review {
     }
 
     private static function call_model($prompt) {
+        $results = self::call_model_group([$prompt]);
+        return $results[0] ?? new WP_Error('review_transport_missing', '模型没有返回审核结果');
+    }
+
+    /** Send up to three independent review batches concurrently. */
+    private static function call_model_group($prompts) {
         $config = self::config();
-        if ($config['api_key'] === '' || $config['model'] === '') return new WP_Error('review_config_missing', 'LLM 审核配置不完整', ['status' => 500]);
+        if ($config['api_key'] === '' || $config['model'] === '') return [new WP_Error('review_config_missing', 'LLM 审核配置不完整', ['status' => 500])];
+        if (count($prompts) <= 1 || !function_exists('curl_multi_init')) {
+            $results = [];
+            foreach ($prompts as $prompt) {
+                $body = self::request_body($config, $prompt);
+                $response = wp_remote_post($config['api_url'], ['timeout' => $config['timeout'], 'headers' => [
+                    'Authorization' => 'Bearer ' . $config['api_key'], 'Content-Type' => 'application/json',
+                ], 'body' => $body]);
+                $results[] = is_wp_error($response) ? $response : self::decode_response(
+                    (int) wp_remote_retrieve_response_code($response), (string) wp_remote_retrieve_body($response)
+                );
+            }
+            return $results;
+        }
+        $multi = curl_multi_init(); $handles = [];
+        foreach (array_values($prompts) as $index => $prompt) {
+            $handle = curl_init($config['api_url']);
+            curl_setopt_array($handle, [
+                CURLOPT_POST => true, CURLOPT_RETURNTRANSFER => true, CURLOPT_HEADER => false,
+                CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $config['api_key'], 'Content-Type: application/json'],
+                CURLOPT_POSTFIELDS => self::request_body($config, $prompt), CURLOPT_CONNECTTIMEOUT => min(20, $config['timeout']),
+                CURLOPT_TIMEOUT => $config['timeout'], CURLOPT_SSL_VERIFYPEER => true, CURLOPT_SSL_VERIFYHOST => 2,
+            ]);
+            curl_multi_add_handle($multi, $handle); $handles[$index] = $handle;
+        }
+        do { $state = curl_multi_exec($multi, $running); if ($running) curl_multi_select($multi, 1.0); } while ($running && $state === CURLM_OK);
+        $results = [];
+        foreach ($handles as $index => $handle) {
+            $error = curl_error($handle);
+            $results[$index] = $error !== '' ? new WP_Error('review_transport_error', $error) : self::decode_response(
+                (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE), (string) curl_multi_getcontent($handle)
+            );
+            curl_multi_remove_handle($multi, $handle); curl_close($handle);
+        }
+        curl_multi_close($multi); ksort($results);
+        return array_values($results);
+    }
+
+    private static function request_body($config, $prompt) {
         $body = ['model' => $config['model'], 'temperature' => 0, 'messages' => [
             ['role' => 'system', 'content' => 'You are a conservative bilingual QA reviewer for technical product manuals. Output strict JSON only.'],
             ['role' => 'user', 'content' => $prompt],
         ]];
         if ($config['provider'] === 'doubao') $body['thinking'] = ['type' => 'disabled'];
-        $response = wp_remote_post($config['api_url'], ['timeout' => $config['timeout'], 'headers' => [
-            'Authorization' => 'Bearer ' . $config['api_key'], 'Content-Type' => 'application/json',
-        ], 'body' => wp_json_encode($body, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE)]);
-        if (is_wp_error($response)) return $response;
-        $status = (int) wp_remote_retrieve_response_code($response); $raw = json_decode((string) wp_remote_retrieve_body($response), true);
+        return wp_json_encode($body, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    }
+
+    private static function decode_response($status, $raw_body) {
+        $raw = json_decode((string) $raw_body, true);
         if ($status < 200 || $status >= 300) return new WP_Error('review_http_error', (string) ($raw['error']['message'] ?? ('HTTP ' . $status)), ['status' => 502]);
         $content = trim((string) ($raw['choices'][0]['message']['content'] ?? ''));
         $content = trim((string) preg_replace('/^```(?:json)?\s*|\s*```$/i', '', $content));
         $data = json_decode($content, true);
         return is_array($data) ? $data : new WP_Error('review_invalid_json', '模型审核结果不是有效 JSON', ['status' => 502]);
+    }
+
+    private static function slot_map($occurrences) {
+        $slots = [];
+        foreach ($occurrences as $occurrence) {
+            $id = (string) ($occurrence['occurrence_id'] ?? '');
+            if ($id !== '') $slots['{{LISUN_TERM:' . $id . '}}'] = (string) ($occurrence['translated_text'] ?? '');
+        }
+        return $slots;
+    }
+
+    private static function readable_template($template, $slots) {
+        return strtr((string) $template, (array) $slots);
+    }
+
+    private static function substantive_text($text) {
+        return trim((string) preg_replace('/\s+/u', ' ', (string) $text));
     }
 
     private static function config() {
