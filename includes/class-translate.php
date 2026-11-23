@@ -2208,7 +2208,7 @@ class Lisun_Manual_Translate {
      * the user before continuing because restoring the previous revision will
      * overwrite that newer translation. Locked pages still cannot be changed.
      */
-    public static function undo_glossary_apply($zh_post_id, $applied_revision_id) {
+    public static function undo_glossary_apply($zh_post_id, $applied_revision_id, $restore_revision_id = 0) {
         $zh_post_id = (int) $zh_post_id;
         $applied_revision_id = (int) $applied_revision_id;
         if ($zh_post_id <= 0 || $applied_revision_id <= 0) {
@@ -2226,7 +2226,9 @@ class Lisun_Manual_Translate {
         if (!$active) {
             return new WP_Error('no_v2', '没有找到 V2 翻译版本');
         }
-        $previous_id = Lisun_Manual_V2_Repository::previous_revision_id($zh_post_id, $applied_revision_id);
+        $previous_id = (int) $restore_revision_id > 0
+            ? (int) $restore_revision_id
+            : Lisun_Manual_V2_Repository::previous_revision_id($zh_post_id, $applied_revision_id);
         if ($previous_id <= 0) {
             return new WP_Error('no_previous', '找不到应用之前的版本，无法撤销');
         }
