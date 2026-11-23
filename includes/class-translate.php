@@ -3265,6 +3265,29 @@ class Lisun_Manual_Translate {
         ];
     }
 
+    /** Publish a manually accepted AI-review revision through the normal V2 save/push path. */
+    public static function publish_review_revision($post_id, $revision_id) {
+        $post = get_post((int) $post_id);
+        if (!$post || $post->post_type !== 'manual') {
+            return new WP_Error('review_invalid_post', '无效的说明书页面');
+        }
+        $active = Lisun_Manual_V2_Repository::get_active_snapshot((int) $post_id);
+        if (!$active || (int) ($active['revision']['id'] ?? 0) !== (int) $revision_id) {
+            return new WP_Error('review_revision_changed', '审核版本已变化，请刷新后重试');
+        }
+        $materialized = Lisun_Manual_V2_Runner::materialize_active((int) $post_id);
+        if (is_wp_error($materialized)) return $materialized;
+        return self::publish_v2_result($post, [
+            'revision_id' => (int) $revision_id,
+            'content' => (string) ($materialized['content'] ?? ''),
+            'title' => (string) ($materialized['title'] ?? ''),
+            'translated_units' => 0,
+            'reused_units' => count((array) ($active['units'] ?? [])),
+            'requests' => 0,
+            'characters' => 0,
+        ], true);
+    }
+
     /**
      */
     private static function verify_translation($source, $translated) {

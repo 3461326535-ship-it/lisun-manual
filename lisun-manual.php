@@ -56,6 +56,7 @@ require_once LISUN_MANUAL_PATH . 'includes/translation-v2/class-google-adapter.p
 // [修改时间：2026-11-18 +08:00] LLM 主翻译旁路实验；默认关闭，不改变生产翻译路径。
 require_once LISUN_MANUAL_PATH . 'includes/translation-v2/class-llm-lab-adapter.php';
 require_once LISUN_MANUAL_PATH . 'includes/translation-v2/class-runner.php';
+require_once LISUN_MANUAL_PATH . 'includes/translation-v2/class-llm-review.php';
 require_once LISUN_MANUAL_PATH . 'includes/lib/simple-html-dom.php';
 require_once LISUN_MANUAL_PATH . 'includes/class-translate.php';
 require_once LISUN_MANUAL_PATH . 'includes/class-translate-log.php';
@@ -165,6 +166,7 @@ function lisun_manual_init() {
     Lisun_Manual_Glossary::init();
     Lisun_Manual_Glossary_Apply::init();
     Lisun_Manual_Translate::init();
+    Lisun_Manual_V2_LLM_Review::init();
     Lisun_Manual_Translate_Log::init();
     Lisun_Manual_Sync::init();
     Lisun_Manual_Access_Control::init();
