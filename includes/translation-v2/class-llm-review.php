@@ -97,17 +97,23 @@ class Lisun_Manual_V2_LLM_Review {
         $status = (string) ($item['status'] ?? 'pass');
         $decision = (string) ($item['decision'] ?? '');
         $label = ['pass' => '✓ 通过', 'suggest' => '建议修改', 'block' => '需处理'][$status] ?? $status;
+        $category = [
+            'terminology' => '术语', 'language' => '语言', 'style' => '风格', 'format' => '格式',
+        ][(string) ($item['category'] ?? '')] ?? '综合';
         ?>
         <div class="lisun-review-card <?php echo $decision ? 'is-decided' : ''; ?>" data-key="<?php echo esc_attr((string) ($item['unit_key'] ?? '')); ?>" data-status="<?php echo esc_attr($status); ?>">
-            <div><strong><?php echo (int) ($index + 1); ?>. <?php echo esc_html($label); ?></strong> <span style="color:#646970">[<?php echo esc_html((string) ($item['category'] ?? '综合')); ?>] <?php echo esc_html(number_format((float) ($item['confidence'] ?? 0), 2)); ?></span></div>
-            <div class="lisun-review-source"><strong>原文：</strong><?php echo esc_html((string) ($item['source'] ?? '')); ?></div>
-            <div class="lisun-review-target"><strong>当前：</strong><?php echo esc_html((string) ($item['current'] ?? '')); ?></div>
-            <?php if (!empty($item['suggestion'])): ?><div class="lisun-review-suggestion"><strong>建议：</strong><?php echo esc_html((string) $item['suggestion']); ?></div><?php endif; ?>
+            <div><strong><?php echo (int) ($index + 1); ?>. <?php echo esc_html($label); ?></strong> <span style="color:#646970">[<?php echo esc_html($category); ?>]<?php if ((float) ($item['confidence'] ?? 0) > 0): ?> <?php echo esc_html(number_format((float) $item['confidence'], 2)); ?><?php endif; ?></span></div>
+            <div class="lisun-review-source"><strong>原文：</strong><?php echo esc_html(self::operator_text((string) ($item['source'] ?? ''))); ?></div>
+            <div class="lisun-review-target"><strong>当前：</strong><?php echo esc_html(self::operator_text((string) ($item['current'] ?? ''))); ?></div>
+            <?php if (!empty($item['suggestion'])): ?><div class="lisun-review-suggestion"><strong>建议：</strong><?php echo esc_html(self::operator_text((string) $item['suggestion'])); ?></div><?php endif; ?>
             <?php if (!empty($item['reason'])): ?><div class="lisun-review-reason"><strong>原因：</strong><?php echo esc_html((string) $item['reason']); ?></div><?php endif; ?>
             <?php if ($decision): ?><p><strong>处理结果：</strong><?php echo esc_html($decision === 'accepted' ? '已接受并生成新版本' : ($decision === 'undone' ? '已撤销' : '已拒绝')); ?>
                 <?php if ($decision === 'accepted' && !empty($item['accepted_revision_id'])): ?><button type="button" class="button button-small lisun-review-undo" style="margin-left:8px">撤销接受</button><?php endif; ?>
             </p><?php elseif ($status !== 'pass'): ?>
-                <div class="lisun-review-actions"><button type="button" class="button button-primary lisun-review-accept">✓ 接受</button><button type="button" class="button lisun-review-reject">✗ 拒绝</button><button type="button" class="button lisun-review-open-discuss">💬 讨论</button></div>
+                <div class="lisun-review-actions">
+                    <?php if (!empty($item['suggestion_template'])): ?><button type="button" class="button button-primary lisun-review-accept">✓ 接受</button><?php endif; ?>
+                    <button type="button" class="button lisun-review-reject">✗ 拒绝</button><button type="button" class="button lisun-review-open-discuss">💬 <?php echo empty($item['suggestion_template']) ? '重新生成' : '讨论'; ?></button>
+                </div>
                 <div class="lisun-review-discuss"><textarea placeholder="告诉模型哪里不合适、希望如何调整……"></textarea><p><button type="button" class="button button-primary lisun-review-send">发送并修改建议</button></p></div>
             <?php endif; ?>
         </div>
@@ -238,11 +244,12 @@ class Lisun_Manual_V2_LLM_Review {
                 'unit_key' => (string) $unit['unit_key'],
                 'context' => (string) ($unit['unit_type'] ?? 'text'),
                 'source' => (string) ($unit['source_text'] ?? ''),
-                'translation' => (string) ($unit['target_template'] ?? ''),
-                'term_slots' => $slots,
+                'visible_translation' => self::readable_template((string) ($unit['target_template'] ?? ''), $slots),
+                'translation_template' => (string) ($unit['target_template'] ?? ''),
+                'protected_terms' => $slots,
             ];
         }
-        return "Review each Chinese-to-English technical-manual translation. Check terminology, untranslated Chinese, grammar, naturalness, formal manual register, heading capitalization, and spacing between numbers and SI units. Do not fact-check. Each {{LISUN_TERM:...}} marker already renders as the visible English term listed in term_slots: never repeat that term before or after its marker. Preserve every HTML tag and every marker exactly in any suggestion. Use consistent Title Case for h1-h6 headings, including explanatory text in parentheses; do not demand Title Case for ordinary td table data. Preserve the conventional form 70% RH without inserting a space before %. Ignore differences consisting only of leading/trailing whitespace. Mark pass when the current wording is already acceptable; do not invent a suggestion identical to the current translation. If grammar around a fixed term marker is awkward, rewrite the sentence around it rather than adding a suffix outside the marker. Return strict JSON only: {\"items\":[{\"unit_key\":\"...\",\"status\":\"pass|suggest|block\",\"category\":\"terminology|language|style|format\",\"confidence\":0.0,\"reason\":\"concise Chinese reason\",\"suggestion\":\"complete corrected translation template or empty\"}]}. Include every input key once.\n\n" . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return "Review only the final visible English in visible_translation against the Chinese source. Check terminology, untranslated Chinese, grammar, naturalness, formal manual register, heading capitalization, and spacing between numbers and SI units. Do not fact-check. Never report or discuss templates, markers, slots, placeholders, tags, protected terms, or implementation details in the reason. Those are internal and invisible to the operator. The translation_template and protected_terms exist only so that any suggested replacement can preserve every HTML tag and every {{LISUN_TERM:...}} token exactly. A visible plural such as 'integrating spheres' is correct English and must not be criticized merely because its internal template forms the plural outside a protected token. Use consistent Title Case for h1-h6 headings, including explanatory text in parentheses; do not demand Title Case for ordinary td table data. Preserve the conventional form 70% RH without inserting a space before %. Ignore differences consisting only of leading/trailing whitespace. Mark pass when the visible wording is already acceptable; do not invent an identical or purely internal suggestion. Return strict JSON only: {\"items\":[{\"unit_key\":\"...\",\"status\":\"pass|suggest|block\",\"category\":\"terminology|language|style|format\",\"confidence\":0.0,\"reason\":\"concise Chinese explanation of the visible language issue only\",\"suggestion\":\"complete corrected translation_template or empty\"}]}. Include every input key once.\n\n" . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     private static function review_batch($units, $data) {
@@ -260,20 +267,37 @@ class Lisun_Manual_V2_LLM_Review {
             $item = (array) ($returned[$source['unit_key']] ?? []);
             $status = in_array(($item['status'] ?? ''), ['pass', 'suggest', 'block'], true) ? $item['status'] : 'block';
             $suggestion = trim((string) ($item['suggestion'] ?? ''));
-            if ($status !== 'pass' && self::substantive_text($source['translation']) === self::substantive_text($suggestion)) {
+            $visible_current = self::readable_template($source['translation'], $source['term_slots']);
+            $visible_suggestion = self::readable_template($suggestion, $source['term_slots']);
+            $reason = trim((string) ($item['reason'] ?? ''));
+            $visible_reason = self::visible_reason($reason);
+            if ($status !== 'pass' && (
+                self::substantive_text($visible_current) === self::substantive_text($visible_suggestion)
+                || $visible_reason === ''
+            )) {
                 $status = 'pass'; $suggestion = ''; $item['reason'] = '';
+            } else {
+                $item['reason'] = $visible_reason;
             }
             if ($status !== 'pass') {
                 $valid = self::validate_template($source['translation'], $suggestion);
-                if (!is_wp_error($valid)) $valid = self::validate_slot_grammar($suggestion, $source['term_slots']);
                 if (is_wp_error($valid)) {
-                    $status = 'block'; $suggestion = '';
-                    $item['reason'] = trim((string) ($item['reason'] ?? '')) . '（模型建议破坏了标签或术语槽位，已禁止直接接受）';
+                    $repaired = self::repair_review_suggestion($source, $item, $suggestion);
+                    if (!is_wp_error($repaired)) {
+                        $suggestion = (string) $repaired['suggestion'];
+                        $item['reason'] = (string) $repaired['reason'];
+                        $item['confidence'] = (float) ($repaired['confidence'] ?? $item['confidence'] ?? 0);
+                        $valid = self::validate_template($source['translation'], $suggestion);
+                    }
+                    if (is_wp_error($valid)) {
+                        $status = 'block'; $suggestion = '';
+                        $item['reason'] = 'AI 发现译文可能存在问题，但未能生成可安全应用的修改。请点击“重新生成”继续处理。';
+                    }
                 }
             }
             $result[] = [
                 'unit_key' => $source['unit_key'], 'source' => $source['source'],
-                'current_template' => $source['translation'], 'current' => self::readable_template($source['translation'], $source['term_slots']),
+                'current_template' => $source['translation'], 'current' => $visible_current,
                 'status' => $status, 'category' => sanitize_key((string) ($item['category'] ?? 'language')),
                 'confidence' => max(0, min(1, (float) ($item['confidence'] ?? 0))),
                 'reason' => sanitize_textarea_field((string) ($item['reason'] ?? '')),
@@ -286,7 +310,7 @@ class Lisun_Manual_V2_LLM_Review {
     }
 
     private static function discuss_item($item, $message) {
-        $prompt = "Revise one technical-manual translation suggestion based on the operator's feedback. Preserve every HTML tag and every {{LISUN_TERM:...}} marker exactly. Never put suffixes such as s, es, ed, or ing immediately after a term marker; rewrite the sentence around the fixed marker instead. A singular fixed term must not directly follow 'two' or 'a pair of'. For cable-like mass nouns, write 'two lengths of <marker>'; otherwise use a grammatical surrounding noun such as 'two <marker> units'. Return strict JSON only: {\"suggestion\":\"complete corrected translation\",\"reason\":\"concise Chinese explanation\"}.\n\n" . wp_json_encode([
+        $prompt = "Revise one technical-manual translation suggestion based on the operator's feedback. Evaluate the final visible English, while preserving every HTML tag and every {{LISUN_TERM:...}} token exactly in the returned template. In the Chinese reason, discuss only the visible language improvement. Never mention markers, slots, placeholders, tags, templates, or implementation constraints. Return strict JSON only: {\"suggestion\":\"complete corrected translation template\",\"reason\":\"concise Chinese explanation of the visible change\"}.\n\n" . wp_json_encode([
             'source' => $item['source'] ?? '', 'current' => $item['current_template'] ?? $item['current'] ?? '', 'previous_suggestion' => $item['suggestion_template'] ?? $item['suggestion'] ?? '',
             'previous_reason' => $item['reason'] ?? '', 'operator_feedback' => $message,
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -294,17 +318,39 @@ class Lisun_Manual_V2_LLM_Review {
         if (is_wp_error($data)) return $data;
         $suggestion = trim((string) ($data['suggestion'] ?? ''));
         $valid = self::validate_template((string) ($item['current_template'] ?? $item['current'] ?? ''), $suggestion);
-        if (!is_wp_error($valid)) $valid = self::validate_slot_grammar($suggestion, (array) ($item['term_slots'] ?? []));
-        if (is_wp_error($valid) && in_array($valid->get_error_code(), ['review_suffix_outside_marker', 'review_slot_grammar'], true)) {
-            $retry = self::call_model($prompt . "\n\nYour previous suggestion violated fixed-term grammar. Rewrite it without a suffix after a marker and without placing a singular marker directly after 'two' or 'a pair of'. Use 'two lengths of <marker>' for power cord. Invalid suggestion:\n" . $suggestion);
+        if (is_wp_error($valid)) {
+            $retry = self::call_model($prompt . "\n\nYour previous suggestion changed protected structure. Return the same language improvement while copying every token and HTML tag from the current template exactly. Do not mention this correction in the reason. Invalid suggestion:\n" . $suggestion);
             if (is_wp_error($retry)) return $retry;
             $suggestion = trim((string) ($retry['suggestion'] ?? ''));
             $data = $retry;
             $valid = self::validate_template((string) ($item['current_template'] ?? $item['current'] ?? ''), $suggestion);
-            if (!is_wp_error($valid)) $valid = self::validate_slot_grammar($suggestion, (array) ($item['term_slots'] ?? []));
         }
         if (is_wp_error($valid)) return $valid;
-        return ['suggestion' => $suggestion, 'reason' => sanitize_textarea_field((string) ($data['reason'] ?? ''))];
+        $reason = sanitize_textarea_field((string) ($data['reason'] ?? ''));
+        if (self::mentions_internal_structure($reason)) $reason = '已根据你的反馈重新生成译文建议。';
+        return ['suggestion' => $suggestion, 'reason' => $reason];
+    }
+
+    /** Retry an unsafe model draft without exposing transport constraints to the operator. */
+    private static function repair_review_suggestion($source, $item, $invalid_suggestion) {
+        $prompt = "Regenerate one Chinese-to-English technical-manual correction. The previous draft changed protected structure. Keep the same visible language correction, but copy every HTML tag and every {{LISUN_TERM:...}} token from current_template exactly. Judge and explain only the final visible English. The Chinese reason must never mention markers, slots, placeholders, tags, templates, protected terms, or validation. Return strict JSON only: {\"suggestion\":\"complete corrected template\",\"reason\":\"concise Chinese explanation of the visible language issue\",\"confidence\":0.0}.\n\n" . wp_json_encode([
+            'source' => (string) ($source['source'] ?? ''),
+            'visible_current' => self::readable_template((string) ($source['translation'] ?? ''), (array) ($source['term_slots'] ?? [])),
+            'current_template' => (string) ($source['translation'] ?? ''),
+            'protected_terms' => (array) ($source['term_slots'] ?? []),
+            'visible_issue' => self::mentions_internal_structure((string) ($item['reason'] ?? '')) ? '' : (string) ($item['reason'] ?? ''),
+            'invalid_draft' => (string) $invalid_suggestion,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $data = self::call_model($prompt);
+        if (is_wp_error($data)) return $data;
+        $suggestion = trim((string) ($data['suggestion'] ?? ''));
+        $valid = self::validate_template((string) ($source['translation'] ?? ''), $suggestion);
+        if (is_wp_error($valid)) return $valid;
+        $reason = sanitize_textarea_field((string) ($data['reason'] ?? ''));
+        if ($reason === '' || self::mentions_internal_structure($reason)) {
+            $reason = 'AI 已重新生成可安全应用的译文建议，请核对修改内容。';
+        }
+        return ['suggestion' => $suggestion, 'reason' => $reason, 'confidence' => max(0, min(1, (float) ($data['confidence'] ?? $item['confidence'] ?? 0)))];
     }
 
     private static function accept_suggestion($post_id, $unit_key, $suggestion) {
@@ -338,24 +384,28 @@ class Lisun_Manual_V2_LLM_Review {
         preg_match_all('/\{\{LISUN_TERM:[^}]+\}\}/', $current, $a); preg_match_all('/\{\{LISUN_TERM:[^}]+\}\}/', $suggestion, $b);
         $left = $a[0] ?? []; $right = $b[0] ?? []; sort($left); sort($right);
         if ($left !== $right) return new WP_Error('review_marker_mismatch', '建议改变了术语槽位，不能接受', ['status' => 422]);
-        if (preg_match('/\}\}\s*(?:s|es|ed|ing)\b/i', $suggestion)) {
-            return new WP_Error('review_suffix_outside_marker', '建议把词尾放在术语槽位外，不能接受', ['status' => 422]);
-        }
         preg_match_all('/<\/?[a-zA-Z][^>]*>/', $current, $ta); preg_match_all('/<\/?[a-zA-Z][^>]*>/', $suggestion, $tb);
         if (($ta[0] ?? []) !== ($tb[0] ?? [])) return new WP_Error('review_tag_mismatch', '建议改变了 HTML 标签，不能接受', ['status' => 422]);
         return true;
     }
 
-    private static function validate_slot_grammar($template, $slots) {
-        foreach ((array) $slots as $marker => $visible) {
-            $visible = trim((string) $visible);
-            if ($visible === '' || preg_match('/s$/i', $visible)) continue;
-            $quoted = preg_quote((string) $marker, '/');
-            if (preg_match('/(?:\btwo\s+|\ba(?:\s+[a-z-]+){0,3}\s+pair\s+of\s+)' . $quoted . '/i', (string) $template)) {
-                return new WP_Error('review_slot_grammar', '建议把固定单数术语直接接在数量结构后，语法不成立', ['status' => 422]);
-            }
+    private static function mentions_internal_structure($text) {
+        return (bool) preg_match('/LISUN_TERM|placeholder|marker|slot|template|protected term|占位符|术语标记|术语槽位|固定术语标记|内部标记|标签结构|模板结构/ui', (string) $text);
+    }
+
+    /** Remove implementation-only clauses while retaining genuine visible-language findings. */
+    private static function visible_reason($reason) {
+        $parts = preg_split('/[，。；;.!！？?]+\s*/u', trim((string) $reason), -1, PREG_SPLIT_NO_EMPTY);
+        $visible = [];
+        foreach ((array) $parts as $part) {
+            if (!self::mentions_internal_structure($part)) $visible[] = trim((string) $part);
         }
-        return true;
+        return trim(implode('；', $visible));
+    }
+
+    /** Present only the text an operator sees; structural markup stays internal. */
+    private static function operator_text($value) {
+        return trim(html_entity_decode(wp_strip_all_tags((string) $value), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
     }
 
     private static function call_model($prompt) {
