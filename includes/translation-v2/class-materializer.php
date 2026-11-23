@@ -88,8 +88,11 @@ class Lisun_Manual_V2_Materializer {
             // Deleted/missing terms freeze their last known English; they never
             // remove surrounding text or an entire historical occurrence.
             $stored_text = (string) ($occurrence['translated_text'] ?? '');
-            $text = $mode === self::MODE_CURRENT_GLOSSARY && isset($glossary_by_id[$term_id])
-                ? (string) ($glossary_by_id[$term_id]['en'] ?? '')
+            $glossary_term = isset($glossary_by_id[$term_id])
+                ? (array) $glossary_by_id[$term_id]
+                : [];
+            $text = $mode === self::MODE_CURRENT_GLOSSARY && $glossary_term
+                ? (string) ($glossary_term['en'] ?? '')
                 : $stored_text;
             $context = (string) ($target_case_contexts[$id]
                 ?? $occurrence['case_context'] ?? 'body');
@@ -98,15 +101,7 @@ class Lisun_Manual_V2_Materializer {
             // applied later. This keeps common equipment names lowercase in
             // running prose without lowercasing acronyms, model names, or
             // mixed-case brands such as LED and iPhone.
-            if ($mode === self::MODE_CURRENT_GLOSSARY
-                && $context === 'body'
-                && preg_match('/^\s*[a-z]/', $stored_text)) {
-                $lowered = preg_replace_callback('/\b[A-Z][a-z]+\b/', static function ($word) {
-                    return strtolower((string) $word[0]);
-                }, $text);
-                if (is_string($lowered)) $text = $lowered;
-            }
-            $text = Lisun_Manual_V2_Term_Matcher::apply_case($text, $context);
+            $text = self::apply_contextual_term_case($text, $context);
             $slot = count($rendered_terms);
             $rendered_terms[$slot] = htmlspecialchars($text, ENT_NOQUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');
             return "\x01LISUN_TERM:{$slot}\x02";
@@ -206,6 +201,26 @@ class Lisun_Manual_V2_Materializer {
             }
         }
         return $contexts;
+    }
+
+    /**
+     * 2026-11-23: Render glossary casing from English position without adding
+     * operator-facing term modes. Ordinary equipment names are sentence case
+     * in prose; brand/model-bearing names retain their registered spelling.
+     */
+    public static function apply_contextual_term_case($text, $context) {
+        $text = trim((string) $text);
+        $context = (string) $context;
+        if ($text === '') return $text;
+
+        if ($context === 'body'
+            && !preg_match('/\bLISUN\b|\d|[A-Za-z]+-[A-Za-z0-9]/u', $text)) {
+            $lowered = preg_replace_callback('/\b[A-Z][a-z]+\b/', static function ($word) {
+                return strtolower((string) $word[0]);
+            }, $text);
+            if (is_string($lowered)) $text = $lowered;
+        }
+        return Lisun_Manual_V2_Term_Matcher::apply_case($text, $context);
     }
 
     /**

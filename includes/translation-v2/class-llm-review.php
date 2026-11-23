@@ -326,7 +326,11 @@ class Lisun_Manual_V2_LLM_Review {
     public static function review_prompt($units) {
         $payload = [];
         foreach ($units as $unit) {
-            $slots = self::slot_map((array) ($unit['occurrences'] ?? []));
+            $slots = self::slot_map(
+                (array) ($unit['occurrences'] ?? []),
+                (string) ($unit['target_template'] ?? ''),
+                (string) ($unit['field'] ?? $unit['field_name'] ?? 'content')
+            );
             $payload[] = [
                 'unit_key' => (string) $unit['unit_key'],
                 'context' => (string) ($unit['unit_type'] ?? 'text'),
@@ -336,7 +340,7 @@ class Lisun_Manual_V2_LLM_Review {
                 'protected_terms' => $slots,
             ];
         }
-        return "Review only the final visible English in visible_translation against the Chinese source. Check terminology, untranslated Chinese, grammar, naturalness, formal manual register, heading capitalization, and spacing between numbers and SI units. Do not fact-check. Never report or discuss templates, markers, slots, placeholders, tags, protected terms, or implementation details in the reason. Those are internal and invisible to the operator. The translation_template and protected_terms exist only so that any suggested replacement can preserve every HTML tag and every {{LISUN_TERM:...}} token exactly. A visible plural such as 'integrating spheres' is correct English and must not be criticized merely because its internal template forms the plural outside a protected token. Use consistent Title Case for h1-h6 headings, including explanatory text in parentheses; do not demand Title Case for ordinary td table data. Preserve the conventional form 70% RH without inserting a space before %. Ignore differences consisting only of leading/trailing whitespace. Mark pass when the visible wording is already acceptable; do not invent an identical or purely internal suggestion. Return strict JSON only: {\"items\":[{\"unit_key\":\"...\",\"status\":\"pass|suggest|block\",\"category\":\"terminology|language|style|format\",\"confidence\":0.0,\"reason\":\"concise Chinese explanation of the visible language issue only\",\"suggestion\":\"complete corrected translation_template or empty\"}]}. Include every input key once.\n\n" . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return "Review only the final visible English in visible_translation against the Chinese source. Check terminology, untranslated Chinese, grammar, naturalness, formal manual register, heading capitalization, and SI typography. Do not fact-check. Never report or discuss templates, markers, slots, placeholders, tags, protected terms, or implementation details in the reason. Those are internal and invisible to the operator. The translation_template and protected_terms exist only so that any suggested replacement can preserve every HTML tag and every {{LISUN_TERM:...}} token exactly. A visible plural such as 'integrating spheres' is correct English and must not be criticized merely because its internal template forms the plural outside a protected token. Use consistent Title Case for h1-h6 headings, including explanatory text in parentheses; use normal sentence casing in running prose and do not demand Title Case for ordinary td table data. Use '25 ± 2 °C' with spaces around ± and between the number and °C. Preserve the project style '70% RH', '≤ 70% RH', and '≥ 70% RH'; do not add a space before % or remove the space after a comparison sign. Before returning suggest, compare the visible suggestion with visible_translation. Every clause in reason must identify wording or typography that actually changes in the suggestion. Never discuss unchanged text, and mark pass if the proposed visible text is effectively unchanged. Ignore differences consisting only of leading/trailing whitespace. Mark pass when the visible wording is already acceptable; do not invent an identical or purely internal suggestion. Return strict JSON only: {\"items\":[{\"unit_key\":\"...\",\"status\":\"pass|suggest|block\",\"category\":\"terminology|language|style|format\",\"confidence\":0.0,\"reason\":\"concise Chinese explanation of actual visible changes only\",\"suggestion\":\"complete corrected translation_template or empty\"}]}. Include every input key once.\n\n" . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     private static function review_batch($units, $data) {
@@ -344,7 +348,12 @@ class Lisun_Manual_V2_LLM_Review {
         foreach ($units as $unit) {
             $payload[] = [
                 'unit_key' => (string) $unit['unit_key'], 'source' => (string) ($unit['source_text'] ?? ''),
-                'translation' => (string) ($unit['target_template'] ?? ''), 'term_slots' => self::slot_map((array) ($unit['occurrences'] ?? [])),
+                'translation' => (string) ($unit['target_template'] ?? ''),
+                'term_slots' => self::slot_map(
+                    (array) ($unit['occurrences'] ?? []),
+                    (string) ($unit['target_template'] ?? ''),
+                    (string) ($unit['field'] ?? $unit['field_name'] ?? 'content')
+                ),
             ];
         }
         $returned = [];
@@ -397,7 +406,7 @@ class Lisun_Manual_V2_LLM_Review {
     }
 
     private static function discuss_item($item, $message) {
-        $prompt = "Revise one technical-manual translation suggestion based on the operator's feedback. Evaluate the final visible English, while preserving every HTML tag and every {{LISUN_TERM:...}} token exactly in the returned template. In the Chinese reason, discuss only the visible language improvement. Never mention markers, slots, placeholders, tags, templates, or implementation constraints. Return strict JSON only: {\"suggestion\":\"complete corrected translation template\",\"reason\":\"concise Chinese explanation of the visible change\"}.\n\n" . wp_json_encode([
+        $prompt = "Revise one technical-manual translation suggestion based on the operator's feedback. Evaluate the final visible English, while preserving every HTML tag and every {{LISUN_TERM:...}} token exactly in the returned template. Use '25 ± 2 °C', '70% RH', '≤ 70% RH', and '≥ 70% RH' as the project typography. In the Chinese reason, describe only wording or typography that actually changes between the current visible text and the returned suggestion. Never claim to have changed text that remains identical. Never mention markers, slots, placeholders, tags, templates, or implementation constraints. Return strict JSON only: {\"suggestion\":\"complete corrected translation template\",\"reason\":\"concise Chinese explanation of actual visible changes only\"}.\n\n" . wp_json_encode([
             'source' => $item['source'] ?? '', 'current' => $item['current_template'] ?? $item['current'] ?? '', 'previous_suggestion' => $item['suggestion_template'] ?? $item['suggestion'] ?? '',
             'previous_reason' => $item['reason'] ?? '', 'operator_feedback' => $message,
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -561,11 +570,20 @@ class Lisun_Manual_V2_LLM_Review {
         return is_array($data) ? $data : new WP_Error('review_invalid_json', '模型审核结果不是有效 JSON', ['status' => 502]);
     }
 
-    private static function slot_map($occurrences) {
+    private static function slot_map($occurrences, $template = '', $field = 'content') {
         $slots = [];
+        $contexts = class_exists('Lisun_Manual_V2_Materializer')
+            ? Lisun_Manual_V2_Materializer::target_case_contexts((string) $template, (array) $occurrences, (string) $field)
+            : [];
         foreach ($occurrences as $occurrence) {
             $id = (string) ($occurrence['occurrence_id'] ?? '');
-            if ($id !== '') $slots['{{LISUN_TERM:' . $id . '}}'] = (string) ($occurrence['translated_text'] ?? '');
+            if ($id === '') continue;
+            $text = (string) ($occurrence['translated_text'] ?? '');
+            $context = (string) ($contexts[$id] ?? $occurrence['case_context'] ?? 'body');
+            $text = class_exists('Lisun_Manual_V2_Materializer')
+                ? Lisun_Manual_V2_Materializer::apply_contextual_term_case($text, $context)
+                : Lisun_Manual_V2_Term_Matcher::apply_case($text, $context);
+            $slots['{{LISUN_TERM:' . $id . '}}'] = $text;
         }
         return $slots;
     }
