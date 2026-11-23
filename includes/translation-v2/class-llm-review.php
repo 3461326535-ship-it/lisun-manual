@@ -7,7 +7,7 @@ class Lisun_Manual_V2_LLM_Review {
     const PROGRESS_META_KEY = '_lisun_manual_llm_review_progress';
 
     public static function init() {
-        add_action('add_meta_boxes', [__CLASS__, 'add_meta_box']);
+        add_action('add_meta_boxes', [__CLASS__, 'add_meta_box'], 10, 2);
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
     }
 
@@ -30,8 +30,14 @@ class Lisun_Manual_V2_LLM_Review {
         ]);
     }
 
-    public static function add_meta_box() {
+    public static function add_meta_box($post_type = '', $post = null) {
         if (!(bool) get_option('lisun_llm_lab_enabled', false)) return;
+        if ($post_type !== 'manual') return;
+        $lang = $post instanceof WP_Post ? get_post_meta($post->ID, '_lisun_manual_lang', true) : 'zh';
+        if ($lang === 'en') {
+            add_meta_box('lisun-manual-llm-review-annotations', 'AI 校对批注', [__CLASS__, 'render_english_annotations'], 'manual', 'side', 'high');
+            return;
+        }
         add_meta_box('lisun-manual-llm-review', 'AI 翻译预审核', [__CLASS__, 'render_meta_box'], 'manual', 'normal', 'high');
     }
 
@@ -54,26 +60,8 @@ class Lisun_Manual_V2_LLM_Review {
             $b = $priority[(string) ($right['status'] ?? 'suggest')] ?? 2;
             return $a === $b ? ((int) $left['_source_order'] <=> (int) $right['_source_order']) : ($a <=> $b);
         });
-        $proof_pending = $pending;
-        usort($proof_pending, static function ($left, $right) {
-            return (int) ($left['_source_order'] ?? 0) <=> (int) ($right['_source_order'] ?? 0);
-        });
-        $proof_items = [];
-        $proof_html = '';
-        foreach ($proof_pending as $item) {
-            $key = (string) ($item['unit_key'] ?? '');
-            $current = self::operator_text((string) ($item['current'] ?? ''));
-            $proof_items[] = [
-                'key' => $key,
-                'current' => $current,
-                'suggestion' => self::operator_text((string) ($item['suggestion'] ?? '')),
-                'status' => (string) ($item['status'] ?? 'suggest'),
-                'order' => (int) ($item['_source_order'] ?? 0),
-            ];
-            $proof_html .= '<div class="lisun-proof-unit"><div class="lisun-proof-number">'
-                . (int) ($item['_source_order'] ?? 0) . '</div><p data-review-key="'
-                . esc_attr($key) . '">' . esc_html($current) . '</p></div>';
-        }
+        $target_id = (int) get_post_meta($post->ID, '_lisun_manual_target_id', true);
+        $target_link = $target_id && get_post($target_id) ? get_edit_post_link($target_id) : '';
         ?>
         <div id="lisun-review" data-post-id="<?php echo (int) $post->ID; ?>">
             <p>
@@ -81,15 +69,10 @@ class Lisun_Manual_V2_LLM_Review {
                 <span id="lisun-review-status" style="margin-left:8px;color:#646970;">
                     <?php echo $items ? esc_html('上次审核：' . (string) ($review['updated_at'] ?? '') . '；待处理 ' . count($pending) . '（阻断 ' . $counts['block'] . '），通过 ' . $counts['pass'] . '，已处理 ' . count($handled)) : '尚未审核'; ?>
                 </span>
+                <?php if ($target_link && $items): ?>
+                    <a class="button" style="margin-left:8px" href="<?php echo esc_url($target_link); ?>#lisun-manual-llm-review-annotations">打开英文批注校对</a>
+                <?php endif; ?>
             </p>
-            <?php if ($pending): ?><div class="lisun-review-workspace">
-                <div class="lisun-review-proof-pane">
-                    <div class="lisun-review-pane-title">英文校对稿 <span>点击高亮查看批注</span></div>
-                    <textarea id="lisun-review-proof"><?php echo esc_textarea($proof_html); ?></textarea>
-                </div>
-                <div class="lisun-review-comments-pane">
-                    <div class="lisun-review-pane-title">审核批注 <span>阻断项优先</span></div>
-            <?php endif; ?>
             <div id="lisun-review-list">
                 <?php foreach ($pending as $item) self::render_item($item, (int) $item['_source_order'] - 1); ?>
                 <?php if ($handled): ?>
@@ -99,7 +82,6 @@ class Lisun_Manual_V2_LLM_Review {
                     </details>
                 <?php endif; ?>
             </div>
-            <?php if ($pending): ?></div></div><?php endif; ?>
         </div>
         <style>
             .lisun-review-card{border:1px solid #dcdcde;border-left:4px solid #72aee6;background:#fff;margin:10px 0;padding:12px 14px}
@@ -108,86 +90,12 @@ class Lisun_Manual_V2_LLM_Review {
             .lisun-review-suggestion{background:#fff8e5}.lisun-review-reason{margin:7px 0}.lisun-review-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
             .lisun-review-discuss{display:none;margin-top:8px}.lisun-review-discuss textarea{width:100%;min-height:64px}
             .lisun-review-history{margin-top:14px;border-top:1px solid #dcdcde;padding-top:10px}.lisun-review-history>summary{cursor:pointer;font-weight:600;color:#50575e}
-            .lisun-review-workspace{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(360px,1fr);gap:14px;align-items:start}
-            .lisun-review-proof-pane,.lisun-review-comments-pane{min-width:0}.lisun-review-comments-pane{max-height:680px;overflow:auto;padding-right:3px}
-            .lisun-review-pane-title{font-weight:600;margin:0 0 7px;color:#1d2327}.lisun-review-pane-title span{font-weight:400;color:#646970;margin-left:8px}
-            .lisun-review-card.is-active{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1;background:#f0f6fc}
-            @media(max-width:1100px){.lisun-review-workspace{grid-template-columns:1fr}.lisun-review-comments-pane{max-height:none}}
         </style>
         <script>
         jQuery(function($){
             var $root=$('#lisun-review'); if(!$root.length)return;
             var id=$root.data('post-id'), base='<?php echo esc_js(rest_url('lisun-manual/v1')); ?>', nonce='<?php echo esc_js(wp_create_nonce('wp_rest')); ?>';
-            var proofItems=<?php echo wp_json_encode($proof_items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>, proofEditor=null;
             function post(path,data){data.post_id=id;return $.ajax({url:base+path,method:'POST',contentType:'application/json',data:JSON.stringify(data),beforeSend:function(x){x.setRequestHeader('X-WP-Nonce',nonce);}})}
-            function activateCard(key){
-                var $card=$root.find('.lisun-review-card').removeClass('is-active').filter(function(){return String($(this).data('key'))===String(key)}).first().addClass('is-active');
-                if($card.length)$card[0].scrollIntoView({block:'nearest',behavior:'smooth'});
-            }
-            function diffRange(current,suggestion){
-                current=String(current||'');suggestion=String(suggestion||'');
-                var start=0,max=Math.min(current.length,suggestion.length);
-                while(start<max&&current.charAt(start)===suggestion.charAt(start))start++;
-                var a=current.length-1,b=suggestion.length-1;
-                while(a>=start&&b>=start&&current.charAt(a)===suggestion.charAt(b)){a--;b--;}
-                var end=a+1,isWord=function(ch){return /[A-Za-z0-9]/.test(ch||'');};
-                while(start>0&&isWord(current.charAt(start-1))&&isWord(current.charAt(start)))start--;
-                while(end<current.length&&isWord(current.charAt(end-1))&&isWord(current.charAt(end)))end++;
-                if(end<=start){start=Math.max(0,Math.min(start,current.length-1));end=Math.min(current.length,start+1);}
-                return {start:start,end:end};
-            }
-            function domRangeForOffsets(editor,node,start,end){
-                var doc=editor.getDoc(),walker=doc.createTreeWalker(node,NodeFilter.SHOW_TEXT,null,false),range=doc.createRange(),pos=0,n,startSet=false;
-                while((n=walker.nextNode())){
-                    var next=pos+n.nodeValue.length;
-                    if(!startSet&&start<=next){range.setStart(n,Math.max(0,start-pos));startSet=true;}
-                    if(startSet&&end<=next){range.setEnd(n,Math.max(0,end-pos));return range;}
-                    pos=next;
-                }
-                return null;
-            }
-            function initProof(){
-                if(!proofItems.length||!window.tinymce||!document.getElementById('lisun-review-proof'))return;
-                tinymce.init({
-                    selector:'#lisun-review-proof',menubar:false,toolbar:false,statusbar:false,readonly:1,height:620,resize:false,
-                    content_style:'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;line-height:1.65;padding:14px 18px;color:#1d2327}.lisun-proof-unit{display:grid;grid-template-columns:38px 1fr;border-bottom:1px solid #e2e4e7;padding:8px 0}.lisun-proof-number{color:#8c8f94;font-size:12px;padding-top:3px}.lisun-proof-unit p{margin:0}.mce-annotation{border-radius:2px;padding:1px 0;cursor:pointer}.mce-annotation[data-review-status="block"]{background:#ffd7d7;border-bottom:2px solid #d63638}.mce-annotation[data-review-status="suggest"]{background:#fff0b3;border-bottom:2px solid #dba617}.mce-annotation.lisun-active{outline:2px solid #2271b1;outline-offset:1px}',
-                    setup:function(editor){
-                        editor.on('init',function(){
-                            if(!editor.annotator){return;}
-                            proofEditor=editor;
-                            editor.annotator.register('lisun-review',{persistent:false,decorate:function(uid,data){return{attributes:{'data-review-key':data.key,'data-review-status':data.status,'title':'点击查看审核批注'}};}});
-                            editor.annotator.annotationChanged('lisun-review',function(state,name,obj){
-                                $(editor.getBody()).find('.mce-annotation').removeClass('lisun-active');
-                                if(state&&obj){$(obj.nodes).addClass('lisun-active');activateCard(obj.uid);}
-                            });
-                            proofItems.forEach(function(item){
-                                var node=editor.getBody().querySelector('[data-review-key="'+String(item.key).replace(/"/g,'\\"')+'"]');
-                                if(!node)return;
-                                var changed=item.suggestion&&item.current!==item.suggestion
-                                    ? diffRange(item.current,item.suggestion)
-                                    : {start:0,end:item.current.length};
-                                var range=domRangeForOffsets(editor,node,changed.start,changed.end);
-                                if(!range)return;
-                                editor.selection.setRng(range);
-                                editor.annotator.annotate('lisun-review',{uid:item.key,key:item.key,status:item.status});
-                            });
-                            editor.selection.collapse(true);
-                        });
-                    }
-                });
-            }
-            initProof();
-            $root.on('click','.lisun-review-card',function(event){
-                if($(event.target).is('button,textarea,a,input,select,label')||$(event.target).closest('button,textarea,a,input,select,label').length)return;
-                var key=String($(this).data('key')||'');activateCard(key);
-                if(!proofEditor||!proofEditor.annotator)return;
-                var all=proofEditor.annotator.getAll('lisun-review'),nodes=all&&all[key];
-                if(!nodes||!nodes.length)return;
-                $(proofEditor.getBody()).find('.mce-annotation').removeClass('lisun-active');
-                $(nodes).addClass('lisun-active');
-                nodes[0].scrollIntoView({block:'center',behavior:'smooth'});
-                proofEditor.selection.select(nodes[0]);
-            });
             $('#lisun-review-run').on('click',function(){
                 var $b=$(this).prop('disabled',true),cursor=0,$status=$('#lisun-review-status');
                 function next(){
@@ -209,6 +117,134 @@ class Lisun_Manual_V2_LLM_Review {
         });
         </script>
         <?php
+    }
+
+    /** 2026-11-23: Show review annotations in the linked English post while keeping review data on the Chinese source. */
+    public static function render_english_annotations($post) {
+        $source_id = (int) get_post_meta($post->ID, '_lisun_manual_source_id', true);
+        $source = $source_id ? get_post($source_id) : null;
+        if (!$source || get_post_meta($post->ID, '_lisun_manual_lang', true) !== 'en') {
+            echo '<p>未找到对应的中文原稿。</p>';
+            return;
+        }
+
+        $review = self::load($source_id);
+        $pending = [];
+        foreach (array_values((array) ($review['items'] ?? [])) as $index => $item) {
+            if (!empty($item['decision']) || (string) ($item['status'] ?? 'pass') === 'pass') continue;
+            $item['_source_order'] = $index + 1;
+            $item['_current_text'] = self::operator_text((string) ($item['current'] ?? ''));
+            $item['_suggestion_text'] = self::operator_text((string) ($item['suggestion'] ?? ''));
+            $pending[] = $item;
+        }
+        usort($pending, static function ($left, $right) {
+            return (int) $left['_source_order'] <=> (int) $right['_source_order'];
+        });
+        $annotation_items = array_map(static function ($item) {
+            return [
+                'key' => (string) ($item['unit_key'] ?? ''),
+                'current' => (string) ($item['_current_text'] ?? ''),
+                'suggestion' => (string) ($item['_suggestion_text'] ?? ''),
+                'status' => (string) ($item['status'] ?? 'suggest'),
+                'order' => (int) ($item['_source_order'] ?? 0),
+            ];
+        }, $pending);
+        $source_link = get_edit_post_link($source_id);
+        ?>
+        <div id="lisun-annotation-review" data-source-id="<?php echo (int) $source_id; ?>">
+            <p class="description">直接点击正文高亮查看批注。接受或拒绝后，中英文页会同步更新。</p>
+            <?php if ($source_link): ?><p><a href="<?php echo esc_url($source_link); ?>#lisun-manual-llm-review">返回中文审核页</a></p><?php endif; ?>
+            <?php if (!$pending): ?>
+                <p><strong>当前没有待处理批注。</strong></p>
+            <?php else: ?>
+                <div class="lisun-annotation-toolbar">
+                    <button type="button" class="button button-small" id="lisun-annotation-prev">上一条</button>
+                    <span id="lisun-annotation-count">1 / <?php echo count($pending); ?></span>
+                    <button type="button" class="button button-small" id="lisun-annotation-next">下一条</button>
+                </div>
+                <label class="lisun-annotation-filter"><input type="checkbox" id="lisun-annotation-blocks"> 仅查看阻断项</label>
+                <div id="lisun-annotation-cards">
+                    <?php foreach ($pending as $item): ?>
+                        <div class="lisun-annotation-card" data-key="<?php echo esc_attr((string) ($item['unit_key'] ?? '')); ?>" data-status="<?php echo esc_attr((string) ($item['status'] ?? 'suggest')); ?>">
+                            <?php self::render_item($item, (int) $item['_source_order'] - 1); ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                <p class="description" id="lisun-annotation-match"></p>
+            <?php endif; ?>
+        </div>
+        <style>
+            #lisun-annotation-review .lisun-annotation-toolbar{display:flex;align-items:center;justify-content:space-between;gap:5px;margin:10px 0 8px}
+            #lisun-annotation-review .lisun-annotation-filter{display:block;margin:0 0 8px}
+            #lisun-annotation-review .lisun-annotation-card{display:none}
+            #lisun-annotation-review .lisun-annotation-card.is-active{display:block}
+            #lisun-annotation-review .lisun-review-card{margin:0;padding:10px;border:1px solid #dcdcde;border-left:4px solid #72aee6;background:#fff}
+            #lisun-annotation-review .lisun-review-card[data-status="block"]{border-left-color:#d63638}
+            #lisun-annotation-review .lisun-review-source{color:#50575e;margin-top:6px}
+            #lisun-annotation-review .lisun-review-target,#lisun-annotation-review .lisun-review-suggestion{white-space:pre-wrap;background:#f6f7f7;padding:7px;margin:6px 0;overflow-wrap:anywhere}
+            #lisun-annotation-review .lisun-review-suggestion{background:#fff8e5}
+            #lisun-annotation-review .lisun-review-reason{margin:7px 0}
+            #lisun-annotation-review .lisun-review-actions{display:flex;gap:5px;flex-wrap:wrap}
+            #lisun-annotation-review .lisun-review-discuss{display:none;margin-top:8px}
+            #lisun-annotation-review .lisun-review-discuss textarea{width:100%;min-height:72px}
+        </style>
+        <?php if ($pending): ?>
+        <script>
+        jQuery(function($){
+            var $root=$('#lisun-annotation-review'); if(!$root.length)return;
+            var sourceId=$root.data('source-id'),items=<?php echo wp_json_encode($annotation_items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+            var base='<?php echo esc_js(rest_url('lisun-manual/v1')); ?>',nonce='<?php echo esc_js(wp_create_nonce('wp_rest')); ?>',editor=null,visible=[],position=0,matched={};
+            function post(path,data){data.post_id=sourceId;return $.ajax({url:base+path,method:'POST',contentType:'application/json',data:JSON.stringify(data),beforeSend:function(x){x.setRequestHeader('X-WP-Nonce',nonce);}})}
+            function filtered(){return $('#lisun-annotation-blocks').prop('checked')?items.filter(function(x){return x.status==='block';}):items.slice();}
+            function show(key,scroll){
+                visible=filtered(); if(!visible.length){$root.find('.lisun-annotation-card').removeClass('is-active');$('#lisun-annotation-count').text('0 / 0');return;}
+                var next=visible.findIndex(function(x){return String(x.key)===String(key);}); if(next<0)next=Math.min(position,visible.length-1); position=next;
+                var item=visible[position];$root.find('.lisun-annotation-card').removeClass('is-active').filter('[data-key="'+cssEscape(item.key)+'"]').addClass('is-active');
+                $('#lisun-annotation-count').text((position+1)+' / '+visible.length);activateHighlight(item.key,scroll!==false);
+            }
+            function cssEscape(value){return String(value).replace(/(["\\])/g,'\\$1');}
+            function activateHighlight(key,scroll){
+                if(!editor)return;$(editor.getBody()).find('.mce-annotation').removeClass('lisun-annotation-active');
+                var nodes=matched[key]||[];$(nodes).addClass('lisun-annotation-active');if(scroll&&nodes[0])nodes[0].scrollIntoView({block:'center',behavior:'smooth'});
+            }
+            function normalize(value){return String(value||'').replace(/\s+/g,' ').trim();}
+            function diffRange(current,suggestion){
+                current=normalize(current);suggestion=normalize(suggestion);var start=0,max=Math.min(current.length,suggestion.length);
+                while(start<max&&current.charAt(start)===suggestion.charAt(start))start++;var a=current.length-1,b=suggestion.length-1;
+                while(a>=start&&b>=start&&current.charAt(a)===suggestion.charAt(b)){a--;b--;}var end=a+1,isWord=function(ch){return /[A-Za-z0-9]/.test(ch||'');};
+                while(start>0&&isWord(current.charAt(start-1))&&isWord(current.charAt(start)))start--;while(end<current.length&&isWord(current.charAt(end-1))&&isWord(current.charAt(end)))end++;
+                if(end<=start){start=0;end=current.length;}return{start:start,end:end};
+            }
+            function textMap(root){
+                var doc=root.ownerDocument,walker=doc.createTreeWalker(root,NodeFilter.SHOW_TEXT,null,false),text='',points=[],node;
+                while((node=walker.nextNode()))for(var i=0;i<node.nodeValue.length;i++){var ch=node.nodeValue.charAt(i),space=/\s/.test(ch);if(space){if(!text||text.charAt(text.length-1)===' ')continue;ch=' ';}text+=ch;points.push({node:node,offset:i});}
+                return{text:text,points:points};
+            }
+            function makeRange(doc,map,start,end){
+                if(start<0||end<=start||!map.points[start]||!map.points[end-1])return null;var first=map.points[start],last=map.points[end-1],range=doc.createRange();
+                range.setStart(first.node,first.offset);range.setEnd(last.node,last.offset+1);return range;
+            }
+            function install(editorInstance){
+                editor=editorInstance;if(!editor.annotator)return;var body=editor.getBody(),doc=editor.getDoc(),map=textMap(body),cursor=0,ranges=[],missing=0;
+                editor.annotator.register('lisun-review',{persistent:false,decorate:function(uid,data){return{attributes:{'data-review-key':data.key,'data-review-status':data.status,'title':'点击查看审核批注'}};}});
+                items.forEach(function(item){var needle=normalize(item.current),at=map.text.indexOf(needle,cursor);if(at<0)at=map.text.indexOf(needle);if(at<0){missing++;return;}cursor=at+needle.length;var changed=item.suggestion&&normalize(item.suggestion)!==needle?diffRange(needle,item.suggestion):{start:0,end:needle.length};var range=makeRange(doc,map,at+changed.start,at+changed.end);if(range)ranges.push({item:item,range:range});});
+                ranges.reverse().forEach(function(found){editor.selection.setRng(found.range);editor.annotator.annotate('lisun-review',{uid:found.item.key,key:found.item.key,status:found.item.status});});editor.selection.collapse(true);
+                matched=editor.annotator.getAll('lisun-review')||{};editor.annotator.annotationChanged('lisun-review',function(state,name,obj){if(state&&obj)show(obj.uid,false);});
+                var style=doc.createElement('style');style.textContent='.mce-annotation{border-radius:2px;padding:1px 0;cursor:pointer}.mce-annotation[data-review-status="block"]{background:#ffd7d7;border-bottom:2px solid #d63638}.mce-annotation[data-review-status="suggest"]{background:#fff0b3;border-bottom:2px solid #dba617}.mce-annotation.lisun-annotation-active{outline:2px solid #2271b1;outline-offset:1px}';doc.head.appendChild(style);
+                $('#lisun-annotation-match').text(missing?('已定位 '+ranges.length+' 条，'+missing+' 条未在当前英文正文中匹配。'):('已定位全部 '+ranges.length+' 条批注。'));
+                show(items[0].key,true);
+            }
+            function waitForEditor(){var attempts=0,timer=setInterval(function(){var found=window.tinymce&&tinymce.get('content');if(found&&found.initialized){clearInterval(timer);install(found);}else if(++attempts>80){clearInterval(timer);$('#lisun-annotation-match').text('正文编辑器未加载，请切换到“可视化”模式。');}},250);}
+            $('#lisun-annotation-prev').on('click',function(){visible=filtered();if(!visible.length)return;position=(position-1+visible.length)%visible.length;show(visible[position].key,true);});
+            $('#lisun-annotation-next').on('click',function(){visible=filtered();if(!visible.length)return;position=(position+1)%visible.length;show(visible[position].key,true);});
+            $('#lisun-annotation-blocks').on('change',function(){position=0;visible=filtered();show(visible[0]?visible[0].key:'',true);});
+            $root.on('click','.lisun-review-accept,.lisun-review-reject,.lisun-review-undo',function(){var $b=$(this),action=$b.hasClass('lisun-review-accept')?'accept':($b.hasClass('lisun-review-undo')?'undo':'reject'),key=$b.closest('.lisun-review-card').data('key');$b.prop('disabled',true);post('/review/action',{unit_key:key,review_action:action}).done(function(){location.reload()}).fail(function(x){$b.prop('disabled',false);alert((x.responseJSON&&x.responseJSON.message)||'操作失败')})});
+            $root.on('click','.lisun-review-open-discuss',function(){$(this).closest('.lisun-review-card').find('.lisun-review-discuss').toggle()});
+            $root.on('click','.lisun-review-send',function(){var $card=$(this).closest('.lisun-review-card'),$b=$(this).prop('disabled',true),msg=$card.find('textarea').val();post('/review/discuss',{unit_key:$card.data('key'),message:msg}).done(function(){location.reload()}).fail(function(x){$b.prop('disabled',false);alert((x.responseJSON&&x.responseJSON.message)||'操作失败')})});
+            waitForEditor();
+        });
+        </script>
+        <?php endif;
     }
 
     private static function render_item($item, $index) {
