@@ -4,6 +4,7 @@ if (!defined('ABSPATH')) exit;
 
 class Lisun_Manual_V2_LLM_Review {
     const META_KEY = '_lisun_manual_llm_review';
+    const PROGRESS_META_KEY = '_lisun_manual_llm_review_progress';
 
     public static function init() {
         add_action('add_meta_boxes', [__CLASS__, 'add_meta_box']);
@@ -84,7 +85,21 @@ class Lisun_Manual_V2_LLM_Review {
             var $root=$('#lisun-review'); if(!$root.length)return;
             var id=$root.data('post-id'), base='<?php echo esc_js(rest_url('lisun-manual/v1')); ?>', nonce='<?php echo esc_js(wp_create_nonce('wp_rest')); ?>';
             function post(path,data){data.post_id=id;return $.ajax({url:base+path,method:'POST',contentType:'application/json',data:JSON.stringify(data),beforeSend:function(x){x.setRequestHeader('X-WP-Nonce',nonce);}})}
-            $('#lisun-review-run').on('click',function(){var $b=$(this).prop('disabled',true);$('#lisun-review-status').text('AI 正在逐批审核，请稍候…');post('/review/run',{}).done(function(){location.reload()}).fail(function(x){$b.prop('disabled',false);$('#lisun-review-status').text((x.responseJSON&&x.responseJSON.message)||'审核失败')})});
+            $('#lisun-review-run').on('click',function(){
+                var $b=$(this).prop('disabled',true),cursor=0,$status=$('#lisun-review-status');
+                function next(){
+                    post('/review/run',{cursor:cursor}).done(function(result){
+                        cursor=parseInt(result.next_cursor||0,10);
+                        $status.text('AI 审核进度：'+result.processed+' / '+result.total);
+                        if(result.done){location.reload();return;}
+                        next();
+                    }).fail(function(x){
+                        $b.prop('disabled',false);
+                        $status.text((x.responseJSON&&x.responseJSON.message)||'审核失败，可点击按钮重新开始');
+                    });
+                }
+                $status.text('正在准备 AI 审核……');next();
+            });
             $root.on('click','.lisun-review-accept,.lisun-review-reject,.lisun-review-undo',function(){var $b=$(this), action=$b.hasClass('lisun-review-accept')?'accept':($b.hasClass('lisun-review-undo')?'undo':'reject'), key=$b.closest('.lisun-review-card').data('key');if(action==='undo'&&!confirm('撤销这次接受并恢复前一个 V2 版本？'))return;$b.prop('disabled',true);post('/review/action',{unit_key:key,review_action:action}).done(function(){location.reload()}).fail(function(x){$b.prop('disabled',false);alert((x.responseJSON&&x.responseJSON.message)||'操作失败')})});
             $root.on('click','.lisun-review-open-discuss',function(){$(this).closest('.lisun-review-card').find('.lisun-review-discuss').toggle()});
             $root.on('click','.lisun-review-send',function(){var $card=$(this).closest('.lisun-review-card'),$b=$(this).prop('disabled',true),msg=$card.find('textarea').val();post('/review/discuss',{unit_key:$card.data('key'),message:msg}).done(function(){location.reload()}).fail(function(x){$b.prop('disabled',false);alert((x.responseJSON&&x.responseJSON.message)||'讨论失败')})});
@@ -125,6 +140,78 @@ class Lisun_Manual_V2_LLM_Review {
     }
 
     public static function rest_run($request) {
+        $post_id = (int) $request->get_param('post_id');
+        $cursor = max(0, (int) $request->get_param('cursor'));
+        $snapshot = Lisun_Manual_V2_Repository::get_active_snapshot($post_id);
+        if (!$snapshot) return new WP_Error('review_no_revision', '没有可审核的 V2 翻译版本', ['status' => 409]);
+
+        $occurrences = [];
+        foreach ((array) $snapshot['occurrences'] as $occurrence) {
+            $occurrences[(string) ($occurrence['unit_key'] ?? '')][] = $occurrence;
+        }
+        $units = (array) $snapshot['units'];
+        foreach ($units as &$unit) $unit['occurrences'] = $occurrences[(string) ($unit['unit_key'] ?? '')] ?? [];
+        unset($unit);
+
+        $total = count($units);
+        $revision_id = (int) $snapshot['revision']['id'];
+        if ($cursor === 0) {
+            $progress = [
+                'revision_id' => $revision_id,
+                'model' => self::config()['model'],
+                'started_at' => current_time('mysql'),
+                'items' => [],
+            ];
+        } else {
+            $progress = get_post_meta($post_id, self::PROGRESS_META_KEY, true);
+            if (!is_array($progress) || (int) ($progress['revision_id'] ?? 0) !== $revision_id) {
+                return new WP_Error('review_progress_stale', '翻译版本或审核进度已变化，请重新开始审核', ['status' => 409]);
+            }
+            if (count((array) ($progress['items'] ?? [])) !== $cursor) {
+                return new WP_Error('review_cursor_mismatch', '审核进度不一致，请重新开始审核', ['status' => 409]);
+            }
+        }
+
+        $batch = array_slice($units, $cursor, 12);
+        if ($batch) {
+            $data = self::call_model(self::review_prompt($batch));
+            if (is_wp_error($data)) return $data;
+            $result = self::review_batch($batch, $data);
+            if (is_wp_error($result)) return $result;
+            $progress['items'] = array_merge((array) ($progress['items'] ?? []), $result);
+        }
+
+        $processed = count((array) ($progress['items'] ?? []));
+        $done = $processed >= $total;
+        if (!$done) {
+            $progress['updated_at'] = current_time('mysql');
+            update_post_meta($post_id, self::PROGRESS_META_KEY, $progress);
+            return rest_ensure_response([
+                'done' => false,
+                'processed' => $processed,
+                'total' => $total,
+                'next_cursor' => $processed,
+            ]);
+        }
+
+        $record = [
+            'revision_id' => $revision_id,
+            'model' => (string) ($progress['model'] ?? self::config()['model']),
+            'updated_at' => current_time('mysql'),
+            'items' => (array) ($progress['items'] ?? []),
+        ];
+        update_post_meta($post_id, self::META_KEY, $record);
+        delete_post_meta($post_id, self::PROGRESS_META_KEY);
+        return rest_ensure_response([
+            'done' => true,
+            'processed' => $processed,
+            'total' => $total,
+            'next_cursor' => $processed,
+        ]);
+    }
+
+    /** 2026-11-23: Legacy single-request runner retained for rollback comparison only. */
+    private static function rest_run_legacy($request) {
         $post_id = (int) $request->get_param('post_id');
         $snapshot = Lisun_Manual_V2_Repository::get_active_snapshot($post_id);
         if (!$snapshot) return new WP_Error('review_no_revision', '没有可审核的 V2 翻译版本', ['status' => 409]);
@@ -416,6 +503,8 @@ class Lisun_Manual_V2_LLM_Review {
     /** Send up to three independent review batches concurrently. */
     private static function call_model_group($prompts) {
         $config = self::config();
+        // 2026-11-23: Stay below the reverse-proxy request ceiling; chunked review can retry a failed batch.
+        $config['timeout'] = min(75, max(15, (int) $config['timeout']));
         if ($config['api_key'] === '' || $config['model'] === '') return [new WP_Error('review_config_missing', 'LLM 审核配置不完整', ['status' => 500])];
         if (count($prompts) <= 1 || !function_exists('curl_multi_init')) {
             $results = [];
