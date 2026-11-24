@@ -73,6 +73,7 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
                 CURLOPT_SSL_VERIFYPEER => true,
                 CURLOPT_SSL_VERIFYHOST => 2,
             ]);
+            if ($request['proxy_url'] !== '') curl_setopt($handle, CURLOPT_PROXY, $request['proxy_url']);
             curl_multi_add_handle($multi, $handle);
             $handles[$batch_index] = $handle;
         }
@@ -142,6 +143,28 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
     private function request_batch($batch, $post_id, $batch_id, $corrective_retry = false) {
         $request = $this->build_request($batch, $post_id, $batch_id, $corrective_retry);
         if (is_wp_error($request)) return $request;
+        if ($request['proxy_url'] !== '' && function_exists('curl_init')) {
+            $handle = curl_init($request['url']);
+            curl_setopt_array($handle, [
+                CURLOPT_POST => true,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_HEADER => false,
+                CURLOPT_HTTPHEADER => $request['headers'],
+                CURLOPT_POSTFIELDS => $request['body'],
+                CURLOPT_CONNECTTIMEOUT => min(20, $request['timeout']),
+                CURLOPT_TIMEOUT => $request['timeout'],
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_SSL_VERIFYHOST => 2,
+                CURLOPT_PROXY => $request['proxy_url'],
+            ]);
+            $body = (string) curl_exec($handle);
+            $error = curl_error($handle);
+            $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+            curl_close($handle);
+            return $error !== ''
+                ? new WP_Error('llm_lab_transport_error', $error)
+                : $this->parse_response($batch, $status, $body);
+        }
         $response = wp_remote_post($request['url'], ['timeout' => $request['timeout'], 'headers' => [
             'Authorization' => 'Bearer ' . $request['api_key'], 'Content-Type' => 'application/json'
         ], 'body' => $request['body']]);
@@ -178,6 +201,7 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
             'headers' => ['Authorization: Bearer ' . $config['api_key'], 'Content-Type: application/json'],
             'body' => wp_json_encode($body, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
             'timeout' => $config['timeout'],
+            'proxy_url' => $config['proxy_url'],
         ];
     }
 
@@ -279,6 +303,6 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         if ($model === '') $model = $provider === 'doubao' && $endpoint !== ''
             ? $endpoint
             : trim((string) get_option('lisun_llm_lab_model', $models[$provider] ?? ''));
-        return ['provider' => $provider, 'api_url' => $api_url, 'api_key' => $api_key, 'model' => $model, 'temperature' => (float) ($this->config_override['temperature'] ?? get_option('lisun_llm_lab_temperature', 0)), 'max_tokens' => max(0, (int) ($this->config_override['max_tokens'] ?? get_option('lisun_llm_lab_max_tokens', 8192))), 'timeout' => max(30, (int) ($this->config_override['timeout'] ?? get_option('lisun_llm_lab_timeout', 180)))];
+        return ['provider' => $provider, 'api_url' => $api_url, 'api_key' => $api_key, 'model' => $model, 'temperature' => (float) ($this->config_override['temperature'] ?? get_option('lisun_llm_lab_temperature', 0)), 'max_tokens' => max(0, (int) ($this->config_override['max_tokens'] ?? get_option('lisun_llm_lab_max_tokens', 8192))), 'timeout' => max(30, (int) ($this->config_override['timeout'] ?? get_option('lisun_llm_lab_timeout', 180))), 'proxy_url' => trim((string) ($this->config_override['proxy_url'] ?? get_option('lisun_llm_proxy_url', '')))];
     }
 }

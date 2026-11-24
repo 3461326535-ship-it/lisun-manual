@@ -96,6 +96,7 @@ class Lisun_Manual_V2_LLM_Comparison {
             'temperature' => 0,
             'max_tokens' => max(8192, (int) get_option('lisun_llm_lab_max_tokens', 8192)),
             'timeout' => max(180, (int) get_option('lisun_llm_lab_timeout', 180)),
+            'proxy_url' => $provider === 'gemini' ? trim((string) get_option('lisun_llm_proxy_url', '')) : '',
         ];
     }
 

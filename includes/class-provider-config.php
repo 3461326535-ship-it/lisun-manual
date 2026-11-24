@@ -47,6 +47,20 @@ class Lisun_Manual_Provider_Config {
                 ['option' => $option]
             );
         }
+        // [修改时间：2026-11-24 +08:00] 境外 LLM 可显式使用服务器本机代理。
+        register_setting($group, 'lisun_llm_proxy_url', [
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_text_field',
+            'default' => '',
+        ]);
+        add_settings_field(
+            'lisun_llm_proxy_url',
+            'LLM 本机代理 URL',
+            [__CLASS__, 'render_text_field'],
+            $page,
+            'lisun_deepseek',
+            ['option' => 'lisun_llm_proxy_url', 'description' => '例如 http://127.0.0.1:7890；留空则直接连接。']
+        );
     }
 
     public static function render_password_field($args) {
@@ -56,6 +70,18 @@ class Lisun_Manual_Provider_Config {
             esc_attr($option),
             esc_attr((string) get_option($option, ''))
         );
+    }
+
+    public static function render_text_field($args) {
+        $option = (string) ($args['option'] ?? '');
+        printf(
+            '<input type="text" class="regular-text" name="%1$s" value="%2$s" autocomplete="off">',
+            esc_attr($option),
+            esc_attr((string) get_option($option, ''))
+        );
+        if (!empty($args['description'])) {
+            printf('<p class="description">%s</p>', esc_html((string) $args['description']));
+        }
     }
 
     public static function hide_legacy_fields() {
@@ -82,7 +108,8 @@ class Lisun_Manual_Provider_Config {
             }
             var providerKeyRows = rows(Object.keys(keyFields).map(function (p) { return keyFields[p]; }));
             var commonLlmRows = rows([
-                'lisun_deepseek_temperature', 'lisun_deepseek_max_tokens', 'lisun_deepseek_timeout'
+                'lisun_deepseek_temperature', 'lisun_deepseek_max_tokens', 'lisun_deepseek_timeout',
+                'lisun_llm_proxy_url'
             ]);
             var genericLlmRows = rows(['lisun_llm_api_url', 'lisun_deepseek_model']);
             var relayRows = rows(['lisun_relay_url', 'lisun_relay_secret']);
