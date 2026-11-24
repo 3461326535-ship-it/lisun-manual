@@ -251,10 +251,9 @@ class Lisun_Manual_V2_LLM_Lab_Adapter {
         if (preg_match('/<\/t>\s*(?:s|es|ed|ing)\b/i', $unit_xml, $match)) {
             return new WP_Error('llm_lab_language_validation', '术语标签外出现游离词尾：' . trim((string) $match[0]));
         }
-        $visible = html_entity_decode(wp_strip_all_tags($unit_xml), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        if (preg_match('/\b[A-Za-z]{2,}\s+(?:s|es|ed|ing)\b/i', $visible, $match)) {
-            return new WP_Error('llm_lab_language_validation', '输出中出现游离词尾：' . trim((string) $match[0]));
-        }
+        // [修改时间：2026-11-24 +08:00] 不在纯文本中猜测游离词尾。
+        // “in s”“of S”等合法单位/型号表达会被“英文词 + s”误伤；真正需要阻断的
+        // 术语后缀已由上面的 </t> 边界检查精确覆盖。
         return true;
     }
 
