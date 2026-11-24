@@ -123,6 +123,14 @@ class Lisun_Manual_V2_LLM_Comparison {
         update_post_meta($id, self::META_SOURCE, (int) $source->ID);
         update_post_meta($id, self::META_PROVIDER, $provider);
         update_post_meta($id, self::META_SHADOW, $shadow ? '1' : '0');
+        if (!$shadow) {
+            // [修改时间：2026-11-24 +08:00] 对比稿只能用于查看，禁止进入正式中英绑定和远程同步链路。
+            delete_post_meta($id, '_lisun_manual_source_id');
+            delete_post_meta($id, '_lisun_manual_remote_id');
+            delete_post_meta($id, '_lisun_manual_target_id');
+            update_post_meta($id, '_lisun_manual_lock_sync', 1);
+            update_post_meta($id, '_lisun_manual_sync_status', 'comparison_only');
+        }
         return (int) $id;
     }
 
